@@ -6,8 +6,14 @@ locations above the water.  The Ocean Science Hippies will use these
 measurements to better understand the effects of tides, waves, tsunamis, and
 other ocean phenomena on the coastal environment. 
 
+
 ## Hardware
 
+The custom circuit board design currently used is in `hardware`. 
+
+Mechanical part designs, including radar antennas and lenses, are currently 
+being developed and will be added to this repository if and when we figure out
+what on Earth we're doing. 
 
 
 ## Firmware
@@ -17,25 +23,32 @@ other ocean phenomena on the coastal environment.
 The design uses an ESP32 processor, chosen primarily for its WiFi and Bluetooth
 capability, as the main controller.
 
+The current ESP32 firmware is in the `WaterSense_Radar_JJH` directory. 
+After cloning this repository, open the `WaterSense_Radar_JJH` directory in a
+VSCode/PlatformIO workspace and you should be able to compile and run the
+ESP32 firmware. 
+
 ### STM32 on XM125
 
 The STM32 microcontroller on the XM125 radar can be given a custom program to
 enable measurements at longer range (for tall piers and the like) or otherwise
 optimized for our use. 
 
-Details to be added soon. 
+A temporary hack, used until we get the STM32 files set up as we prefer them and
+decide how best to configure the radar, is to use a binary copy of the last 
+working code, using an ST-Link2 programmer to flash it to the radar module. 
+
+More details to be added soon. 
+
 
 ## Software
 
-Software which runs on PCs, phones, or tablets.  Details to be added soon.  Or
-at least sometime, as our time allows. 
-
-## Acconeer Tools
+### Acconeer Tools
 
 The radar modules can be tested with tools supplied by the manufacturer; this
 is _really_ helpful for evaluating the effects of design changes.
 
-### The _Acconeer Exploration Tool_
+#### The _Acconeer Exploration Tool_
 
 This handy application consists of a firmware package and a PC application.
 Although it's designed to be run on an official Acconeer development board, the
