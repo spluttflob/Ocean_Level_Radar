@@ -1,10 +1,12 @@
 # Inexpensive Millimeter-wave Radar for Ocean Level Measurement
 
-This project aims to create relatively simple and inexpensive designs for
-measuring ocean level from piers, pilings, trees, or other relatively fixed
-locations above the water.  The Ocean Science Hippies will use these
-measurements to better understand the effects of tides, waves, tsunamis, and
-other ocean phenomena on the coastal environment. 
+This project aims to create simple and inexpensive designs for measuring 
+ocean level from piers, pilings, trees, or other relatively fixed
+locations above the water.  THe measurements are to be taken quickly enough
+that ocean waves and perhaps wind chop can be resolved. 
+Ocean Science Hippies will use these measurements to better understand the 
+effects of tides, waves, tsunamis, sea level rise, and other ocean phenomena 
+on the coastal environment. 
 
 
 ## Hardware
@@ -31,8 +33,8 @@ ESP32 firmware.
 ### STM32 on XM125
 
 The STM32 microcontroller on the XM125 radar can be given a custom program to
-enable measurements at longer range (for tall piers and the like) or otherwise
-optimized for our use. 
+enable measurements at longer range (for tall piers and the like) or be 
+otherwise optimized for our use. 
 
 A temporary hack, used until we get the STM32 files set up as we prefer them and
 decide how best to configure the radar, is to use a binary copy of the last 
@@ -72,6 +74,8 @@ instructions **with the following exceptions:**
   marked `STM32 UART0` in the area where the GPS board sits.  Connect a USB to
   RS-232 serial adapter to STM32 UART0 pins, remembering the annoying RS-232 
   standard where RXD of one device must connect to TXD of the other. 
+  If you're a civil, environmental, or mechanical engineer: Don't forget the 
+  ground wire.  `:)`
   The Exploration Tool should now be able to connect to the XM125 as if the
   XM125 were on the official evaluation board. 
 
@@ -80,3 +84,10 @@ instructions **with the following exceptions:**
 * Connect USB-Serial to ST's UART
 * Set up Exploration Tool on PC
 --> 
+
+## References
+
+* A Masters thesis utilizing ultrasonic rather than radar sensors which gives
+  some perspective to the project:  
+  <https://digitalcommons.calpoly.edu/theses/2745/>
+
