@@ -1,2 +1,16 @@
 
 *.FCBak
+hardware/horn_antenna_0.FCStd
+
+MicroPython/ajax0.py
+MicroPython/ble0.py
+MicroPython/daylight.py
+MicroPython/PC_BLE.py
+MicroPython/webpage0.py
+
+RADAR_BOGAN_BOM_JR2.xlsx
+
+TestData/
+xm125_old/
+xm125/
+XM125/

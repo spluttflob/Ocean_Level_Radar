@@ -25,16 +25,25 @@ what on Earth we're doing.
 The design uses an ESP32 processor, chosen primarily for its WiFi and Bluetooth
 capability, as the main controller.
 
-The current ESP32 firmware is in the `WaterSense_Radar_JJH` directory. 
+#### C++
+
+The current C++ ESP32 firmware is in the `WaterSense_Radar_JJH` directory. 
 After cloning this repository, open the `WaterSense_Radar_JJH` directory in a
 VSCode/PlatformIO workspace and you should be able to compile and run the
 ESP32 firmware. 
+
+#### MicroPython
+
+
 
 ### STM32 on XM125
 
 The STM32 microcontroller on the XM125 radar can be given a custom program to
 enable measurements at longer range (for tall piers and the like) or be 
 otherwise optimized for our use. 
+
+The source code for the STM32 microcontroller in the XM125 radar module is in
+subdirectory `xm125`.
 
 A temporary hack, used until we get the STM32 files set up as we prefer them and
 decide how best to configure the radar, is to use a binary copy of the last 

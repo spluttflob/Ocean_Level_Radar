@@ -1,8 +1,0 @@
-../Src/examples/JJH/jjh_v2.c:443:13:empty_uart_input_buffer	16	static
-../Src/examples/JJH/jjh_v2.c:405:13:get_esp32_serial	88	static
-../Src/examples/JJH/jjh_v2.c:651:13:do_sensor_calibration	48	static
-../Src/examples/JJH/jjh_v2.c:566:13:cleanup	8	static
-../Src/examples/JJH/jjh_v2.c:845:13:debug_print	280	static
-../Src/examples/JJH/jjh_v2.c:821:19:send_esp32_serial	24	static
-../Src/examples/JJH/jjh_v2.c:841:6:send_esp32_serial_byte	16	static
-../Src/examples/JJH/jjh_v2.c:189:5:acconeer_main_JJH_V2	592	static

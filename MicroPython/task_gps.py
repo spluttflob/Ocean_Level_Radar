@@ -1,0 +1,176 @@
+## @file task_gps.py
+#
+#  This task sets up and watches a GPS module that keeps track of position and
+#  time for a Bogan Radar. It uses a Real-Time Clock (RTC) to hold the time
+#  in between GPS fixes.
+#
+#  The current design uses a PCF8523 RTC on an Adafruit(tm) Adalogger board
+#  which can keep time while the ESP32 is powered down. One could also use the
+#  RTC inside the ESP32; it would be necessary to wait for the GPS to get a fix
+#  before knowing where and when it is if the ESP32's RTC is used, and if the
+#  signal isn't too good or the GPS has been off for a while, this can take 
+#  many minutes.
+#
+#  @author Spluttflob
+#  @date   2025-Nov-14 modified heavily from Boatsie GPS
+#  @copyright (c) 2025 by Spluttflob, released under the GPL V3
+
+import as_GPS
+import machine
+import uasyncio as asyncio
+import pcf8523
+
+
+## The local offset from GMT in hours; PDT is -7 and PST is -8
+LOCAL_OFFSET = -8
+
+## The pin number of the GPS power pin
+GPS_POWER_PIN_NUM = const(32)
+
+## A pin object for the GPS power pin
+gps_power_pin = machine.Pin(GPS_POWER_PIN_NUM, machine.Pin.OUT, value=0)
+
+## The number of GPS fixes before the real-time clock is updated with GPS time.
+#  A typical GPS might be set up to deliver a fix every 5 seconds; do the math.
+GPS_FIXES_PER_RTC_UPDATE = 720
+
+## @brief   A counter used in gps_callback() to schedule clock updates.
+#  @details Initialize it so the RTCs are updated with GPS time as soon as a
+#           fix is available, then periodically thereafter.
+callback_counter = GPS_FIXES_PER_RTC_UPDATE
+
+## Global reference to the PCF8523 real-time clock, or None if we don't have
+#  one. It's set to None here and initialized to a useful value if a device is
+#  found at the correct address on the I2C bus.
+pcf_rtc = None
+
+## Global reference to the ESP32 RTC, which other tasks will need to use
+esp_rtc = machine.RTC()
+
+## A variable which will be set True when a valid date and time from either the
+#  PCF8523 RTC or the GPS has been put into the ESP32 RTC
+valid_datetime = False
+
+
+## Callback which runs for each valid GPS fix.
+#  @param agps The GPS driver which calls this callback
+#  @param *_ A list of other parameters, all of which are ignored
+def gps_callback(agps, *_):
+    global callback_counter, valid_datetime
+
+    # Update the RTCs with (Y, M, D, h, m, s) once every GPS_..._UPDATE fixes
+    callback_counter += 1
+    if callback_counter >= GPS_FIXES_PER_RTC_UPDATE:
+        callback_counter = 0
+
+        day, mon, year = agps.date
+        year += 2000
+        hrs, mns, scs = agps.local_time
+
+        print(f"Updating RTC at {year}-{mon}-{day} {hrs}:{mns:02d}:{scs:02d}")
+        # Update the fancy PCF8523 RTC and the ESP32's built-in RTC
+        pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
+        esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
+
+        valid_datetime = True
+
+
+## Turn on the GPS module by setting the power control pin high. This
+#  assumes that there's an N-channel MOSFET connecting the ground of the
+#  GPS module to system ground. If no power pin has been specified, this
+#  method does nothing.
+def gps_on():
+    if gps_power_pin is not None:
+        gps_power_pin.value(1)
+
+
+## Turn off the GPS module by setting the power control pin high. This
+#  assumes that there's an N-channel MOSFET connecting the ground of the
+#  GPS module to system ground.  If no power pin has been specified, this
+#  method does nothing.
+def gps_off():
+    if gps_power_pin is not None:
+        gps_power_pin.value(0)
+
+
+## The GPS task function which creates the GPS object and processes data
+#  strings from it to make information available to other tasks. The task
+#  code doesn't do much because the action happens in callbacks in AS_GPS
+#  @param i2c The I2C bus which is used to talk to the PCF8523 real-time clock
+#  @param period_ms How often the task function runs
+#  @param test_print Whether to print diagnostic data to the serial port
+async def gps_task(i2c, period_ms=5000, test_print=False):
+
+    global pcf_rtc, esp_rtc, valid_datetime
+
+    # Create an RTC driver if using the PCF8523
+    if 0x68 in i2c.scan():
+        pcf_rtc = pcf8523.PCF8523(i2c)
+
+    gps_on()
+
+    # If a PCF8523 real-time clock is available, get time from it because
+    # that chip should have a battery backup, unlike the RTC in the ESP32
+    if pcf_rtc is not None:
+        year, mon, day, hrs, mns, scs = pcf_rtc.datetime
+        esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
+        valid_datetime = True
+        print(f"Set ESP32 RTC to {esp_rtc.datetime()} from PCF8523")
+
+    while True:
+        if test_print:
+            hrs, mns, scs = the_gps.local_time
+            print(f"GPS {hrs}:{mns:02d}:{scs:02d}, ", end='')
+            print(f"TsF: {the_gps.time_since_fix():6d}, ", end='')
+            print(f"V:{the_gps._valid:08b}, ", end='')
+            print()
+
+        await asyncio.sleep_ms(period_ms)
+
+
+# ================================ TEST CODE ===================================
+if __name__ == "__main__":
+
+    ## The UART (serial port) connected to the GPS module. 
+    uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0, tx=14,
+                        rx=32)
+
+    ## The one and only GPS module that a cheap ocean wave radar needs
+    the_gps = as_GPS.AS_GPS(asyncio.StreamReader(uart),
+                            local_offset=LOCAL_OFFSET, fix_cb=gps_callback)
+
+    i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
+    print(f"I2C devices: " + ",".join(f"0x{item:x}" for item in i2c.scan()))
+
+    # A task which echoes what the GPS sends, just for debugging
+    def echo_task():
+        print("GPS echo test task")
+        gps_on()
+        while True:
+            if uart.any():
+                try:
+                    print(uart.read().decode(), end='')
+                except UnicodeError:
+                    print("*", end='')
+
+
+    ## Choose one of the two task functions, echo to see if the GPS module is
+    #  sending any data or the real GPS task which can print information from
+    #  the parser which makes sense of what the GPS module is reporting.
+    async def main():
+#         asyncio.create_task(echo_task())
+        asyncio.create_task(gps_task(i2c, test_print=False))
+
+        await asyncio.sleep_ms(86_400_000)
+
+
+    print("Beginning GPS parser test.")
+    try:
+        asyncio.run(main())
+
+    except KeyboardInterrupt:
+        print("Ctrl-C. ", end='')
+
+    asyncio.new_event_loop()
+    print("Test finished.")
+
