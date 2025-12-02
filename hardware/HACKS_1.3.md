@@ -35,14 +35,16 @@ pin of the 3.3V regulator and extending downwards through an unused mounting
 hole on the board does this.  This wire is connected to the ESP32 USB pin on 
 the bottom of the board as seen in the photo below. 
 
-![Back of main board with a jumper](hack_bottom.jpg)
+![Back of main board with a jumper](hack_bottom_xz.jpg)
 
 _**Note:** The jumper wire should not pass through the holes which are closer
 to the XM125 because doing so will interfere with the mounting fixture and 
 screws that are used to attach the board to the antenna. The board must be
 mounted correctly to the antenna for a strong signal to be received.  Also
 note that the wire is on the right side of the Feather mounting pins because
-the board mounting fixture must be up against the board on the left side._
+the board mounting fixture must be up against the board on the left side; the
+approximate area where the board contacts the mounting fixture is crosshatched
+in the image above._
 
 
 
