@@ -61,18 +61,26 @@ def gps_callback(agps, *_):
     # Update the RTCs with (Y, M, D, h, m, s) once every GPS_..._UPDATE fixes
     callback_counter += 1
     if callback_counter >= GPS_FIXES_PER_RTC_UPDATE:
-        callback_counter = 0
 
+        # The year must be greater than 2024, else something is amiss
         day, mon, year = agps.date
-        year += 2000
-        hrs, mns, scs = agps.local_time
+        if year > 24:
+            callback_counter = 0
 
-        print(f"Updating RTC at {year}-{mon}-{day} {hrs}:{mns:02d}:{scs:02d}")
-        # Update the fancy PCF8523 RTC and the ESP32's built-in RTC
-        pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
-        esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
+            year += 2000
+            hrs, mns, scs = agps.local_time
 
-        valid_datetime = True
+            print(f"Updating RTC at {year}-{mon}-{day} {hrs}:{mns:02d}:{scs:02d}")
+            # Update the fancy PCF8523 RTC and the ESP32's built-in RTC
+            pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
+            esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
+
+            valid_datetime = True
+
+        # A year <2024 is bogus, so check again next time the callback runs
+        else:
+            callback_counter = GPS_FIXES_PER_RTC_UPDATE
+            valid_datetime = False
 
 
 ## Turn on the GPS module by setting the power control pin high. This

@@ -22,6 +22,12 @@ The board is mounted atop a horn-type millimeter-wave antenna that is attached
 to the box with a waterproof seal.  The system is watertight so that it has a
 chance to survive when deployed just above the ocean. 
 
+## Board V1.3 Hacks
+
+The design of the system has changed since a batch of the Version 1.3 boards
+was manufactured, so there have been some hacks made involving jumper wires.
+Please see [HACKS_1.3](HACKS_1.3.md) for details.
+
 ## RADAR Antenna
 
 The horn antenna is a simple cylindrical design, manufactured mostly using a
@@ -63,6 +69,20 @@ nobody sneezes to prevent losing the screws.  After the board is mounted, the
 Featherwing, ESP32, and GPS can be inserted in their sockets and the electrical
 power connection (see below) hooked up. 
 
+![Board attached to the board mount](board_mounted.jpg)
+
+The ESP32 Feather and Adalogger boards are stacked onto the Feather connectors
+on the board in the usual way. Depending on the type of GPS module used, one
+may need to mount the GPS antenna separately from the GPS module board.  If so,
+the antenna can be mounted to the area marked `GPS Antenna Pad` on the board
+with some double-sided foam tape. 
+It is recommended to mount the GPS antenna so that the board mounting screw is
+easily accessible with a screwdriver, as the need to remove the board for
+updates or repairs is all but guaranteed in a research project. 
+
+![Board with all parts attached](assembled_in_box.jpg)
+
+
 ## Electrical Power Connection
 
 For most uses, electricity must be supplied to the radar system from outside, 
@@ -71,19 +91,18 @@ be rated to produce 5.0 to 5.2 volts at around 1 amp. EZSBC boards are
 designed to be supplied from 5 volt USB supplies and rated to handle up to 5.5
 volts._  The power connection must be watertight.  In an experimental setup, we
 have used an inexpensive waterproof automotive style connector glued into a hole
-in the side of the box: 
-
-
+in the side of the box. 
 
 ## Radar Antenna Cover
 
 This is an area of ongoing research. The radar may have an optimally tight beam
 if a plastic phase corrector is attached across the bottom (wide) opening of
 the horn antenna, but for initial testing we're trying polypropylene disks made
-from food containers. The cover's ideal width which minimizes reflections of
-the 60GHz signal depends on the material used. More will be posted when we have
-determined what works well. 
+from various containers. The cover's ideal width which minimizes reflections of
+the 60GHz signal depends on the material used. The Interwebs seem to say that
+a 1.5mm (about 1/16") sheet of polypropylene would make a decent cover. 
+More will be posted when we have determined what works well. 
 
 Remember that the cover must be attached to the end of the horn with a 
 watertight connection to protect the sensor from rain, waves, spray, and
-organisms. 
+errant organisms. 

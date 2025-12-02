@@ -30,36 +30,84 @@ import task_sd_card           # For storing data on the Adalogger
 import task_gps               # Reads NMEA strings from a generic GPS module
 import as_xm125_distance      # The radar module
 import task_mqtt              # If messages are sent through Web in real time
+from micropython import const # Constants use a little less memory
 
 
 ## Save location, date, and time directly from GPS once per this many data lines
-GPS_FIX_PER_SAVE = 60
+GPS_FIX_PER_SAVE = const(60)
+
+## The number of the pin used to wake up the radar and put it to sleep
+RADAR_WAKE_PIN_NUM = const(27)
+
+## The number of the pin used to activate the EZSBC battery voltage divider, or
+#  0 if using another board such as Adafruit's that doesn't have this feature.
+batt_v_ctl_pin = machine.Pin(2, machine.Pin.OUT, value=0)
+
+## The number of the pin used to measure the battery voltage. It's set up with
+#  the maximum attenuation so we can read high enough voltages.
+batt_v_sensor = machine.ADC(machine.Pin(35), atten=machine.ADC.ATTN_11DB)
+
+## An indicator LED used by the watchdog task to show things are OK (or not)
+#  On the EZSBC board, the LED turns on when the pin is set low.
+status_LED = machine.Pin(13, machine.Pin.OUT, value=1)
 
 ## The one SD card driver object for reading the configuration file and saving
-#  data
+#  data.
 the_SD_card = task_sd_card.Radar_SD_Card(task_sd_card.SD_DIR + "/radar.cfg")
 
 ## A serial interface with which to receive data from the GPS module. The pin
-#  numbers are for the Wave Radar board version 1.3
+#  numbers are for the Wave Radar board version 1.3.
 uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0, tx=14, rx=32)
 
-## The one and only GPS module that a cheap ocean wave radar needs
+## The one and only GPS module that a cheap ocean wave radar needs.
 the_gps = as_GPS.AS_GPS(asyncio.StreamReader(uart),
                         local_offset=task_gps.LOCAL_OFFSET,
                         fix_cb=task_gps.gps_callback)
 
-# Create an I2C bus object to talk to the radar sensor and PCF8523 RTC
+## The I2C bus object used to talk to the radar sensor and PCF8523 RTC
 i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
 print(f"I2C devices:", ",".join(f"0x{item:x}" for item in i2c.scan()))
 
 
+## @brief   Task function which monitors how the rest of the system is doing.
+#  @details A watchdog timer is used so that if things really go to pieces, the
+#           system will be restarted. The ESP32 watchdog timer is really strict
+#           in that once it has been started, it cannot be stopped or changed.
+async def task_watchdog():
+
+    # Wait a minute before activating the watchdog timer; this allows someone
+    # to Ctrl-C the system after reboot and halt main.py if there is a bug that
+    # would otherwise cause infinitely repeating watchdog timer reboots.
+    await asyncio.sleep_ms(60_000)
+
+    doggo = machine.WDT(timeout=10_000)    # Timeout every 10 seconds
+
+    while True:
+#         # Battery voltage is being wonky on test machine; not using it for now
+#         batt_v_ctl_pin.value(1)            # Turn on voltage divider, wait for
+#         await asyncio.sleep_ms(10)         # it to settle
+#         vbatt = batt_v_sensor.read_uv() * 2.0
+#         batt_v_ctl_pin.value(0)
+
+        status_LED.value(0)                # For the EZSBC feather, 0 is LED on
+        await asyncio.sleep_ms(40)
+        status_LED.value(1)
+
+        if task_gps.valid_datetime:
+            await asyncio.sleep_ms(4950)   # Blink every 5s if valid, 1s if not
+        else:
+            await asyncio.sleep_ms(950)
+        doggo.feed()                       # Ensure the watchdog (timer) is fed
+
+
 ## @brief   The function which manages taking and saving of radar data.
-#  @details This task creates the radar driver and uses it to get data; it calls
-#  upon the SD card task to save the data. 
+#  @details This task creates the radar driver and uses it to get data; it uses
+#           the SD card task to provide the radar configuration (range, etc.)
+#           and save the data. 
 async def task_radar():
 
     # Create the radar object. GPIO 27 is the WAKE pin of the radar
-    radar = as_xm125_distance.XM125Distance(i2c, 27)
+    radar = as_xm125_distance.XM125Distance(i2c, RADAR_WAKE_PIN_NUM)
     print(f"XM125 distance detector version {radar.version_string()}")
 
     # Try until we get valid parameters from the configuration dictionary
@@ -70,7 +118,7 @@ async def task_radar():
             sensitivity = int(the_SD_card.config["Sensitivity"])
         except KeyError:
             print("Waiting for radar configuration")
-            await asyncio.sleep_ms(100)
+            await asyncio.sleep_ms(5_000)
         else:
             begin_mm = int(begin_dist_m * 1000)
             end_mm = int(end_dist_m * 1000)
@@ -132,9 +180,8 @@ async def main():
     asyncio.create_task(task_radar())
     asyncio.create_task(task_mqtt.mqtt_task())
     asyncio.create_task(task_mqtt.check_WiFi_task())
+    asyncio.create_task(task_watchdog())
 
-#     await asyncio.sleep_ms(10_000)
-#     the_SD_card.set_valid_datetime(True)  # Simulate GPS fix and RTC setting
     while True:
         await asyncio.sleep_ms(1_000)
 

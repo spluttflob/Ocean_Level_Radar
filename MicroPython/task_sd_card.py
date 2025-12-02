@@ -34,7 +34,7 @@ DEFAULT_CONFIG = \
 #  a full queue blocks writing, which is quite bad and should be prevented.
 sd_queue = Queue(maxsize=20)
 
-## How many lines are written to the SD card before we sync() the filesystems to
+## How many lines are written to the SD card before we reopen the data file to
 #  ensure that data is actually written to the card, not just held in a memory
 #  buffer to be written when the file is closed
 SD_LINES_PER_SYNC = 12
@@ -73,6 +73,9 @@ class Radar_SD_Card:
         ## The name of the file which holds configuration information. It
         #  should generally be a full pathname such as @c /sd/config.txt
         self.config_file_name = config_file_name 
+
+        ## The name of the data file in which data is currently being stored
+        self.data_file_name = None
 
         ## A list containing mark data; it will contain contents read from a
         #  file on the SD card.
@@ -129,56 +132,17 @@ class Radar_SD_Card:
             print(f"{key:24s} {value}")
 
 
-#     ## Make a name for a data file which begins with some text and ends with a
-#     #  number. The goal is to make sequentially named files on the SD card.
-#     #  We may be using a primitive filesystem, so we stick to 8+3 file names
-#     #  (8 character names with 3 character extensions).
-#     #  @param prefix Text which is the first four characters of the name plus
-#     #         the directory in which the file will be, such as "/sd/data"
-#     #  @param ext The extension, such as "csv" or "txt"
-#     def __open_data_file(self, prefix, ext):
-# 
-#         count = 0
-#         self.data_file = None
-# 
-#         # If the most recent file name is empty, begin with name zero; if there
-#         # is a name, pull out the number
-#         if not Radar_SD_Card.recent_data_file_name:
-#             count = 0
-#         else:
-#             try:
-#                 count = int(recent_data_file_name.split('.')[0][-4:])
-#             except ValueError:
-#                 count = 0
-# 
-#         # Now make file names and try them until we get an unused name
-#         while True:
-#             a_name = f"{prefix}{count:04d}.{ext}"
-#             try:
-#                 stat(a_name)
-#             except OSError:             # Named file doesn't exist, so open it
-#                 try:
-#                     self.data_file = open(a_name, 'a')
-#                 except OSError as oops:
-#                     print(f"Error {oops} opening '{a_name}'")
-#                 return
-#             else:
-#                 count += 1                   # File exists; try again
-# 
-#         print(f"Opened '{a_name}'")   ######################################
-
-
     ## Open a data file whose name is based on the current date and time.
     def open_data_file(self):
         
         year, mon, day, wd, hrs, mns, scs, us = task_gps.esp_rtc.datetime()
-        fname = SD_DIR + \
+        self.data_file_name = SD_DIR + \
             f"/R_{mon:02d}-{day:02d}_{hrs:02d}{mns:02d}{scs:02d}.txt"
-        print(f"Open file {fname}")
+        print(f"Open file {self.data_file_name}")
         try:
-            self.data_file = open(fname, 'a')
+            self.data_file = open(self.data_file_name, 'a')
         except OSError as oops:
-            print(f"Error {oops} opening {fname}")
+            print(f"Error {oops} opening {self.data_file_name}")
             self.data_file = None
 
 
@@ -187,7 +151,13 @@ class Radar_SD_Card:
     def close_data_file(self):
         if self.data_file:
             self.data_file.close()
-#         umount(SD_DIR)
+
+
+    ## Close and reopen the data file to force data to be written to the card.
+    def reopen_data_file(self):
+        self.data_file.close()
+        self.data_file = open(self.data_file_name, 'a')
+        print(f"File {self.data_file_name} reopened")
 
 
     ## Run a task which reads a configuration from an SD card and saves
@@ -232,7 +202,7 @@ class Radar_SD_Card:
             elif self.state == 2:             # Check if date & time are known
                 if task_gps.valid_datetime:
                     self.state = 3            # state 3
-                    self.open_data_file()                   #SD_DIR + "/data", "txt")
+                    self.open_data_file()
                     await asyncio.sleep_ms(100)
                 else:
                     await asyncio.sleep_ms(200)
@@ -240,14 +210,13 @@ class Radar_SD_Card:
             elif self.state == 3:                # Save data unless card removed
                 text_line = await sd_queue.get()
                 if text_line and self.data_file:
-#                     print(f"Writing: {text_line}", end='')
                     try:
                         self.data_file.write(text_line)
                         # Write buffered data periodically to SD card
                         lines_before_sync += 1
                         if lines_before_sync > SD_LINES_PER_SYNC:
                             lines_before_sync = 0
-                            sync()
+                            self.reopen_data_file()
                     except OSError:
                         self.state = 0           # Oops, card's gone or hosed
                 await asyncio.sleep_ms(100)
