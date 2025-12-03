@@ -131,9 +131,9 @@ being developed and can be found in the `CPython` directory.
 Some more fully Python developed programs to analyze data from the C++ firmware 
 are in the `ESP32_to_Python_GUI` directory. 
 
-It is our intention to merge the capabilities of these two CPython programs
-to create especially convenient and flexible data analysis and plotting
-applications. 
+It is our intention to merge the capabilities of the CPython programs from
+the `CPython` and `ESP32_to_Python_GUI` directories to create especially 
+convenient and flexible data analysis and plotting applications. 
 
 
 ## References
