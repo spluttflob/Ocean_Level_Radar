@@ -20,46 +20,72 @@ what on Earth we're doing.
 
 ## Firmware
 
-### ESP32
+The software currently being developed uses a MicroPython program running on an
+ESP32 as the overall controller, data logging, and network interface computer.
+There is an STM32 microcontroller in the XM125 radar module which runs it own
+software which is written in C. 
 
-The design uses an ESP32 processor, chosen primarily for its WiFi and Bluetooth
-capability, as the main controller.
+### ESP32 Firmware
+
+There are two versions of the software which have been developed. The first
+version is written in C++, and the second (and currently being worked on) 
+version is in MicroPython.
 
 #### C++
 
-The current C++ ESP32 firmware is in the `WaterSense_Radar_JJH` directory. 
+The C++ ESP32 firmware is in the `WaterSense_Radar_JJH` directory. 
 After cloning this repository, open the `WaterSense_Radar_JJH` directory in a
 VSCode/PlatformIO workspace and you should be able to compile and run the
 ESP32 firmware. 
 
 #### MicroPython
 
+For rapid development and testing, MicroPython firmware is provided in the
+`MicroPython` folder.  MicroPython for the ESP32 can be downloaded from:  
+<https://micropython.org/download/ESP32_GENERIC/>.  
+The latest release of the `ESP32_GENERIC` software is recommended for our
+Feather circuit boards. 
+
+With MicroPython installed on the ESP32, all the Python source files <!--plus 
+`radar.cfg`--> should be copied to the root directory of the ESP32's MicroPython 
+filesystem, and `radar.cfg` should be copied to the root directory of the SD
+card which will be used for datalogging. Configuration of the system for use at 
+specific sites should require editing of `main.py` and `radar.cfg` only. The 
+main Python file is edited to disable unneeded tasks; for example, the MQTT 
+task should be turned off (just comment out the `asyncio.create_task()` line)
+at sites where WiFi access and AC power are not available. The radar's range, 
+frequency of data collection, and similar configurations are set in `radar.cfg`
+which can be edited on the SD card. 
 
 
-### STM32 on XM125
+### STM32 on XM125 Firmware
 
 The STM32 microcontroller on the XM125 radar can be given a custom program to
-enable measurements at longer range (for tall piers and the like) or be 
-otherwise optimized for our use. 
+optimize the radar module for our use. We have two setups available:
 
-The source code for the STM32 microcontroller in the XM125 radar module is in
-subdirectory `xm125`.
+* When using the MicroPython firmware on the ESP32, the XM125's STM32 must be
+  flashed with Acconeer's standard distance measurement application.
+  The Acconeer software is available from:  
+  <https://developer.acconeer.com/home/a121-docs-software/xm125-xe125/>  
+  (You have to enroll with a developer account, but at least it's free to do 
+  so.)
 
-A temporary hack, used until we get the STM32 files set up as we prefer them and
-decide how best to configure the radar, is to use a binary copy of the last 
-working code, using an ST-Link2 programmer to flash it to the radar module. 
+* When using the C++ firmware from directory `WaterSense_Radar_JJH` for the 
+  ESP32, the source code for the STM32 microcontroller in the XM125 radar 
+  module from subdirectory `xm125` must be compiled and flashed to the XM125.
+  Compiling the XM125 STM32 code is a bit of a hassle, so we can use a binary 
+  copy of the last working code.
+  
+* It's convenient to use an ST-Link2 programmer to flash the STM32 code to the 
+  radar module. There is an ST-Link2 compatible 6-pin programming header near
+  the screw terminal on the main circuit board, and there are two pushbuttons
+  on the board to reset the STM32 and to put the STM32 in bootloader mode if 
+  needed. 
 
-More details to be added soon. 
 
+## PC Software
 
-## Software
-
-### Acconeer Tools
-
-The radar modules can be tested with tools supplied by the manufacturer; this
-is _really_ helpful for evaluating the effects of design changes.
-
-#### The _Acconeer Exploration Tool_
+### The _Acconeer Exploration Tool_
 
 This handy application consists of a firmware package and a PC application.
 Although it's designed to be run on an official Acconeer development board, the
@@ -84,7 +110,7 @@ instructions **with the following exceptions:**
   RS-232 serial adapter to STM32 UART0 pins, remembering the annoying RS-232 
   standard where RXD of one device must connect to TXD of the other. 
   If you're a civil, environmental, or mechanical engineer: Don't forget the 
-  ground wire.  `:)`
+  ground wire!  `:)`
   The Exploration Tool should now be able to connect to the XM125 as if the
   XM125 were on the official evaluation board. 
 
@@ -93,6 +119,22 @@ instructions **with the following exceptions:**
 * Connect USB-Serial to ST's UART
 * Set up Exploration Tool on PC
 --> 
+
+### Plotting MicroPython Data
+
+If MicroPython is used, data will be saved in a Semicolon And Comma Separated
+Variable (`.sacsv`) format. Some simple programs to plot data in this form are
+being developed and can be found in the `CPython` directory. 
+
+### Plotting C++ Firmware Data
+
+Some more fully Python developed programs to analyze data from the C++ firmware 
+are in the `ESP32_to_Python_GUI` directory. 
+
+It is our intention to merge the capabilities of these two CPython programs
+to create especially convenient and flexible data analysis and plotting
+applications. 
+
 
 ## References
 
