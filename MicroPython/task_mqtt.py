@@ -104,9 +104,13 @@ def get_LAN_certs(namespace):
 
 
 ## Task that sends MQTT messages about radar distance measurements.
-#  The messages are delivered in queue mqtt_queue; when each message shows up,
-#  it is published to the subscribed MQTT server.
-async def mqtt_task():
+#  The messages are delivered in queue mqtt_queue; messages are kept in the
+#  queue until a specified number have arrived, at which time the messages are
+#  published to the subscribed MQTT broker.
+#  @param msgs_per_send The number of messages in the queue which cause the
+#         bunch of messages to be sent
+#  @param poll_time How often to check how many messages are ready to be sent
+async def mqtt_task(msgs_per_send, poll_time):
 
     print('Starting mqtt_task()...', end='')
     ssid, password = get_LAN_certs('mqtt')
@@ -126,12 +130,16 @@ async def mqtt_task():
     print("connected.")
 
     while True:
-
-        # Read the next message from the queue. If there's nothing in the queue,
-        # this task will be blocked right here until something shows up
-        message = await mqtt_queue.get()
-
-        await mqtt_client.publish(MQTT_TOPIC, message.encode(), qos=1)
+        # If enough messages are ready to send, send 'em
+        if mqtt_queue.qsize() >= msgs_per_send:
+            print("MQTT sending...", end='')
+            while not mqtt_queue.empty():
+                message = await mqtt_queue.get()
+                await mqtt_client.publish(MQTT_TOPIC, message.encode(), qos=1)
+            print("done.")
+        # If not enough messages ready to send, wait a bit
+        else:
+            await asyncio.sleep_ms(poll_time)
 
 
 ## Check if the WiFi is still connected. If not, try to reconnect using the
@@ -155,16 +163,27 @@ async def check_WiFi_task():
 
 
 if __name__ == "__main__":
-    
+
+    ## Create some data (just counting numbers) and put it in the queue
+    async def test_data_task():
+        global mqtt_queue
+
+        count = 0
+        while True:
+            astr = f"Count: {count}"
+            print(astr)
+            count += 1
+            await mqtt_queue.put(astr)
+            await asyncio.sleep_ms(1000)
+
+
     print("Testing MQTT node for Bogan Radar")
-#     print(f"LAN certs: {get_LAN_certs('mqtt')}")
 
     ## Get the task functions running, then twiddle thumbs until Control-C'ed.
-    #  @param mqtt_client An object of class MQTTClient to be passed to MQTT task
-    #  @param station The WLAN station which should be talking over WiFi
     async def main():
-        asyncio.create_task(mqtt_task())
+        asyncio.create_task(mqtt_task(10, 100))  # 5 messages, poll every 100ms
         asyncio.create_task(check_WiFi_task())
+        asyncio.create_task(test_data_task())
 
         while True:
             await asyncio.sleep_ms(1000)
