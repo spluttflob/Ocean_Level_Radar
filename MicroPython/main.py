@@ -36,6 +36,11 @@ from micropython import const # Constants use a little less memory
 ## Save location, date, and time directly from GPS once per this many data lines
 GPS_FIX_PER_SAVE = const(60)
 
+## @brief   The number of data points per MQTT messsage.
+#  @details This is used so we're not continuously spamming the MQTT broker,
+#  instead giving it a larger message less frequently.
+POINTS_PER_MQTT_MESSAGE = const(60)
+
 ## The number of the pin used to wake up the radar and put it to sleep
 RADAR_WAKE_PIN_NUM = const(27)
 
@@ -103,8 +108,11 @@ async def task_watchdog():
 ## @brief   The function which manages taking and saving of radar data.
 #  @details This task creates the radar driver and uses it to get data; it uses
 #           the SD card task to provide the radar configuration (range, etc.)
-#           and save the data. 
-async def task_radar():
+#           and save the data. If MQTT is enabled, data will be collected into
+#           messages to be sent to an MQTT broker.
+#  @param   data_per_mqtt_msg The number of readings per MQTT message sent, or
+#           None if we're not using MQTT at all
+async def task_radar(data_per_mqtt_msg):
 
     # Create the radar object. GPIO 27 is the WAKE pin of the radar
     radar = as_xm125_distance.XM125Distance(i2c, RADAR_WAKE_PIN_NUM)
@@ -134,6 +142,8 @@ async def task_radar():
     print(f"Detector status {radar.detector_status():08x}")
 
     last_fix_count = GPS_FIX_PER_SAVE
+    mqtt_string = ""
+    mqtt_count = 0
 
     while True:
         # Take measurement first; it might take some time
@@ -146,9 +156,17 @@ async def task_radar():
         # Print and/or save to SD card the time and measurement
         await task_sd_card.sd_queue.put(";".join((now_str, prt_str)) + "\r\n")
         print(";".join((now_str, prt_str)))
-    
-        # If using MQTT for real-time cloud storage, put message in queue
-        await task_mqtt.mqtt_queue.put(";".join((now_str, prt_str)))
+
+        # If using MQTT for real-time cloud storage, assemble a larger string
+        # with a number of readings to be sent as one MQTT message
+        if data_per_mqtt_msg is not None:
+            mqtt_string += ";".join((now_str, prt_str))
+            mqtt_string += "\r\n"
+            mqtt_count += 1
+            if mqtt_count >= data_per_mqtt_msg:
+                mqtt_count = 0
+                await task_mqtt.mqtt_queue.put(mqtt_string)
+                mqtt_string = ""
 
         # If it's time to save a line of GPS data, do so and reset counter
         if task_gps.valid_datetime:
@@ -177,7 +195,7 @@ async def main():
 
     asyncio.create_task(the_SD_card.task_function())
     asyncio.create_task(task_gps.gps_task(i2c))
-    asyncio.create_task(task_radar())
+    asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
     asyncio.create_task(task_mqtt.mqtt_task())
     asyncio.create_task(task_mqtt.check_WiFi_task())
     asyncio.create_task(task_watchdog())
@@ -188,7 +206,7 @@ async def main():
 
 # Run the main program here. If we're doing a test, the program may be stopped
 # by pressing Ctrl-C. For normal measurements, just leave it running for days,
-# weeks, or months on end. An uncaught exception causes a file sync() to save
+# weeks, or months on end. An uncaught exception causes a file closing to save
 # data to the SD card, then a reboot to restart the whole program
 print("Beginning Bogan Radar water level measurements.")
 try:
@@ -197,10 +215,10 @@ except KeyboardInterrupt:
     print("Ctrl-C. ", end='')
 except Exception as ohnoes:
     print("Uncaught exception {ohnoes}, rebooting!")
-    os.sync()
+    the_SD_card.close_data_file()
     utime.sleep_ms(500)
+finally:
+    the_SD_card.close_data_file()
+    asyncio.new_event_loop()
+    print("Water level measurement test finished.")
     machine.reset()
-
-the_SD_card.close_data_file()
-asyncio.new_event_loop()
-print("Water level measurement test finished.")

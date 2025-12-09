@@ -107,10 +107,7 @@ def get_LAN_certs(namespace):
 #  The messages are delivered in queue mqtt_queue; messages are kept in the
 #  queue until a specified number have arrived, at which time the messages are
 #  published to the subscribed MQTT broker.
-#  @param msgs_per_send The number of messages in the queue which cause the
-#         bunch of messages to be sent
-#  @param poll_time How often to check how many messages are ready to be sent
-async def mqtt_task(msgs_per_send, poll_time):
+async def mqtt_task():
 
     print('Starting mqtt_task()...', end='')
     ssid, password = get_LAN_certs('mqtt')
@@ -130,16 +127,8 @@ async def mqtt_task(msgs_per_send, poll_time):
     print("connected.")
 
     while True:
-        # If enough messages are ready to send, send 'em
-        if mqtt_queue.qsize() >= msgs_per_send:
-            print("MQTT sending...", end='')
-            while not mqtt_queue.empty():
-                message = await mqtt_queue.get()
-                await mqtt_client.publish(MQTT_TOPIC, message.encode(), qos=1)
-            print("done.")
-        # If not enough messages ready to send, wait a bit
-        else:
-            await asyncio.sleep_ms(poll_time)
+        message = await mqtt_queue.get()
+        await mqtt_client.publish(MQTT_TOPIC, message.encode(), qos=1)
 
 
 ## Check if the WiFi is still connected. If not, try to reconnect using the
@@ -169,11 +158,18 @@ if __name__ == "__main__":
         global mqtt_queue
 
         count = 0
+        mqtt_string = ""
+        mqtt_count = 0
         while True:
-            astr = f"Count: {count}"
-            print(astr)
+            astr = f"Count: {count}\r\n"
+            print(astr, end='')
             count += 1
-            await mqtt_queue.put(astr)
+            mqtt_count += 1
+            mqtt_string += astr
+            if mqtt_count >= 5:
+                await mqtt_queue.put(mqtt_string)
+                mqtt_count = 0
+                mqtt_string = ""
             await asyncio.sleep_ms(1000)
 
 
@@ -181,7 +177,7 @@ if __name__ == "__main__":
 
     ## Get the task functions running, then twiddle thumbs until Control-C'ed.
     async def main():
-        asyncio.create_task(mqtt_task(10, 100))  # 5 messages, poll every 100ms
+        asyncio.create_task(mqtt_task())
         asyncio.create_task(check_WiFi_task())
         asyncio.create_task(test_data_task())
 
