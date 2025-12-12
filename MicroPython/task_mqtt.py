@@ -16,10 +16,13 @@ from mqtt_as import MQTTClient, config
 
 
 ## The MQTT topic to which we're broadcasting energy usage on phases A and B
-MQTT_TOPIC = b"wave_radar/test0"
+MQTT_TOPIC = b"bogan_radar/test0"
 
 ## The MQTT server ("broker") to which messages are sent
-MQTT_SERVER = '192.168.2.87'
+MQTT_SERVER = "test.mosquitto.org"
+
+## The port on the MQTT server to be used
+MQTT_PORT = 1883
 
 ## The namespace in the ESP32's NVS where network SSID and password are stored
 CERTS_NAMESPACE = "mqtt"
@@ -119,10 +122,11 @@ async def mqtt_task():
     config['subs_cb'] = callback
     config['connect_coro'] = conn_han
     config['server'] = MQTT_SERVER
+    config['port'] = MQTT_PORT
     MQTTClient.DEBUG = True             # Optional: print diagnostic messages
     mqtt_client = MQTTClient(config)
 
-    print(f"Connecting to MQTT server {MQTT_SERVER}...")
+    print(f"Connecting to MQTT server {MQTT_SERVER} port {MQTT_PORT}...")
     await mqtt_client.connect()
     print("connected.")
 

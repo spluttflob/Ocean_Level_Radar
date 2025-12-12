@@ -33,6 +33,10 @@ import task_mqtt              # If messages are sent through Web in real time
 from micropython import const # Constants use a little less memory
 
 
+## How many milliseconds (approximately) between data points.
+#  This probably ought to be at least 1000 until software has been improved.
+MS_PER_DATA_POINT = 5000
+
 ## Save location, date, and time directly from GPS once per this many data lines
 GPS_FIX_PER_SAVE = const(60)
 
@@ -40,6 +44,14 @@ GPS_FIX_PER_SAVE = const(60)
 #  @details This is used so we're not continuously spamming the MQTT broker,
 #  instead giving it a larger message less frequently.
 POINTS_PER_MQTT_MESSAGE = const(60)
+
+## How many MQTT messages between MQTT "hello" messages that say what this data
+#  is about. We may use public MQTT brokers, so anyone might read the data
+MQTT_MSGS_PER_HELLO = 12
+
+## A message sent infrequently to the MQTT broker explaining to the public what
+#  this data is
+MQTT_HELLO_MESSAGE = "# Public tide data (c) Spluttflob, CC-BY-NC-SA 3.0"
 
 ## The number of the pin used to wake up the radar and put it to sleep
 RADAR_WAKE_PIN_NUM = const(27)
@@ -144,6 +156,7 @@ async def task_radar(data_per_mqtt_msg):
     last_fix_count = GPS_FIX_PER_SAVE
     mqtt_string = ""
     mqtt_count = 0
+    mqtt_hello_count = MQTT_MSGS_PER_HELLO
 
     while True:
         # Take measurement first; it might take some time
@@ -167,6 +180,11 @@ async def task_radar(data_per_mqtt_msg):
                 mqtt_count = 0
                 await task_mqtt.mqtt_queue.put(mqtt_string)
                 mqtt_string = ""
+                # Occasionally send a hello message to public MQTT broker
+                mqtt_hello_count += 1
+                if mqtt_hello_count > MQTT_MSGS_PER_HELLO:
+                    mqtt_hello_count = 0
+                    await task_mqtt.mqtt_queue.put(MQTT_HELLO_MESSAGE)
 
         # If it's time to save a line of GPS data, do so and reset counter
         if task_gps.valid_datetime:
@@ -183,7 +201,7 @@ async def task_radar(data_per_mqtt_msg):
                 await task_sd_card.sd_queue.put(fix_it + "\r\n")
                 await task_mqtt.mqtt_queue.put(fix_it)
 
-        await asyncio.sleep_ms(5_000)
+        await asyncio.sleep_ms(MS_PER_DATA_POINT)
 
 
 ## @brief   The function which creates and runs each of the task functions.
