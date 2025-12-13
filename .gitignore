@@ -18,3 +18,5 @@ hardware/unused/
 
 MicroPython/set_creds.py
 hardware/antenna_holder.3mf
+MicroPython/test_batt_v.py
+MicroPython/test_files.py

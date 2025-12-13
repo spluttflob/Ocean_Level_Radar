@@ -58,6 +58,39 @@ at sites where WiFi access and AC power are not available. The radar's range,
 frequency of data collection, and similar configurations are set in `radar.cfg`
 which can be edited on the SD card. 
 
+##### MicroPython File List
+
+The following files need to be uploaded to the root directory of the ESP32's
+MicroPython filesystem:
+
+* `as_GPS.py` -- The asyncio GPS file from 
+  <https://github.com/peterhinch/micropython-async/tree/master>
+  or use the older, unmaintained copy here.
+  
+* `as_xm125_distance.py` -- From this repository.
+
+* `main.py` -- From this repository.
+
+* `mqtt_as.py` -- The asyncio MQTT client from
+  <https://github.com/peterhinch/micropython-mqtt>
+  or use the older, unmaintained copy here
+
+* `pcf8523.py` -- Driver for the PCF8523 real-time clock on the Adalogger.
+  Modified from others' work; use the copy here.
+  
+* `queue.py` -- From the standard MicroPython queues at 
+  <https://github.com/peterhinch/micropython-async/tree/master>
+  again, with an old local copy here for convenience.
+
+* `task_gps.py` -- GPS task file from this repository.
+
+* `task_mqtt.py` -- MQTT task (used if you have AC and WiFi) from this repository.
+
+* `task_sd_card.py` -- SD card task from this repository.
+
+* `radar.cfg` -- The configuration file for each site, put on the SD card.
+
+
 #### Configuration with `radar.cfg`
 
 The configuration file is a regular text file saved on the data logging SD card.
