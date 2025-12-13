@@ -24,8 +24,14 @@ import pcf8523
 ## The local offset from GMT in hours; PDT is -7 and PST is -8
 LOCAL_OFFSET = -8
 
+## The pin number of the ESP32 pin connected to the GPS RXD pin
+GPS_RXD_PIN_NUM = const(14)
+
+## The pin number of the ESP32 pin connected to the GPS TXD pin
+GPS_TXD_PIN_NUM = const(32)
+
 ## The pin number of the GPS power pin
-GPS_POWER_PIN_NUM = const(32)
+GPS_POWER_PIN_NUM = const(15)
 
 ## A pin object for the GPS power pin
 gps_power_pin = machine.Pin(GPS_POWER_PIN_NUM, machine.Pin.OUT, value=0)
@@ -50,7 +56,6 @@ esp_rtc = machine.RTC()
 ## A variable which will be set True when a valid date and time from either the
 #  PCF8523 RTC or the GPS has been put into the ESP32 RTC
 valid_datetime = False
-
 
 ## Callback which runs for each valid GPS fix.
 #  @param agps The GPS driver which calls this callback
@@ -81,6 +86,22 @@ def gps_callback(agps, *_):
         else:
             callback_counter = GPS_FIXES_PER_RTC_UPDATE
             valid_datetime = False
+
+
+## The UART (serial port) connected to the GPS module. We use non-standard
+#  pins on the 1.3 board; it's just what has worked out. Because of the
+#  annoying RS-232 naming pin convention, the ESP32's TXD (tx) pin connects
+#  to the GPS's RXD pin and vice versa. For some reason, we need to ensure
+#  that the pin connected to GPS TXD is a regular input, or something
+#  (maybe a pullup?) prevents good GPS signals on the RS-232 line.
+pin_rx = machine.Pin(GPS_TXD_PIN_NUM, machine.Pin.IN)
+uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0,
+                    tx=GPS_RXD_PIN_NUM, rx=GPS_TXD_PIN_NUM)
+pin_rx.init(machine.Pin.IN)
+
+## The one and only GPS module that a cheap ocean wave radar needs
+the_gps = as_GPS.AS_GPS(asyncio.StreamReader(uart),
+                        local_offset=LOCAL_OFFSET, fix_cb=gps_callback)
 
 
 ## Turn on the GPS module by setting the power control pin high. This
@@ -131,7 +152,7 @@ async def gps_task(i2c, period_ms=5000, test_print=False):
             print(f"GPS {hrs}:{mns:02d}:{scs:02d}, ", end='')
             print(f"TsF: {the_gps.time_since_fix():6d}, ", end='')
             print(f"V:{the_gps._valid:08b}, ", end='')
-            print()
+            print(f"{the_gps.latitude()} {the_gps.longitude()}")
 
         await asyncio.sleep_ms(period_ms)
 
@@ -139,14 +160,7 @@ async def gps_task(i2c, period_ms=5000, test_print=False):
 # ================================ TEST CODE ===================================
 if __name__ == "__main__":
 
-    ## The UART (serial port) connected to the GPS module. 
-    uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0, tx=14,
-                        rx=32)
-
-    ## The one and only GPS module that a cheap ocean wave radar needs
-    the_gps = as_GPS.AS_GPS(asyncio.StreamReader(uart),
-                            local_offset=LOCAL_OFFSET, fix_cb=gps_callback)
-
+    # Used so the GPS can update the PCF8523 real-time clock if it's there
     i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
     print(f"I2C devices: " + ",".join(f"0x{item:x}" for item in i2c.scan()))
 
@@ -167,7 +181,7 @@ if __name__ == "__main__":
     #  the parser which makes sense of what the GPS module is reporting.
     async def main():
 #         asyncio.create_task(echo_task())
-        asyncio.create_task(gps_task(i2c, test_print=False))
+        asyncio.create_task(gps_task(i2c, period_ms=10_000, test_print=True))
 
         await asyncio.sleep_ms(86_400_000)
 

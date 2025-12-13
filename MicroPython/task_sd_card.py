@@ -132,6 +132,14 @@ class Radar_SD_Card:
             print(f"{key:24s} {value}")
 
 
+    ## Write the configuration into a data file in an easy-ish-to-read format.
+    #  A data file must be open as self.data_file.
+    def write_config(self):
+        if self.data_file:
+            for key, value in self.config.items():
+                self.data_file.write(f"{key:24s} {value}\r\n")
+
+
     ## Open a data file whose name is based on the current date and time.
     def open_data_file(self):
         
@@ -144,6 +152,8 @@ class Radar_SD_Card:
         except OSError as oops:
             print(f"Error {oops} opening {self.data_file_name}")
             self.data_file = None
+        else:
+            self.write_config()
 
 
     ## Close the data file.
@@ -222,15 +232,15 @@ class Radar_SD_Card:
                 await asyncio.sleep_ms(100)
 
 
+## The one SD card driver object which will be accessed from other tasks in
+#  order to get a configuration and save data.
+the_SD_card = Radar_SD_Card(SD_DIR + "/radar.cfg")
+
 
 # --------------------------------- Test Code ----------------------------------
 if __name__ == "__main__":
 
     import utime
-
-    ## The one SD card driver object which will be accessed from other tasks in
-    #  order to save data.
-    the_SD_card = Radar_SD_Card(SD_DIR + "/radar.cfg")
 
     print(f"Task SD Card Test, asyncio {'.'.join(map(str, asyncio.__version__))}")
 

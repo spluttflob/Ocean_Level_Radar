@@ -13,10 +13,12 @@ import socket
 from network import WLAN, STA_IF
 import uasyncio as asyncio
 from mqtt_as import MQTTClient, config
+import task_sd_card                           # The site name is in config here
 
 
-## The MQTT topic to which we're broadcasting energy usage on phases A and B
-MQTT_TOPIC = b"bogan_radar/test0"
+## The first part of the MQTT topic to which we're sending data.
+#  The site name will be added to this to get the full topic name.
+MQTT_TOPIC = b"bogan_radar/"
 
 ## The MQTT server ("broker") to which messages are sent
 MQTT_SERVER = "test.mosquitto.org"
@@ -130,9 +132,16 @@ async def mqtt_task():
     await mqtt_client.connect()
     print("connected.")
 
+    # Get the site name from the configuration file and add it to the general
+    # topic to get the full topic name for the MQTT broker
+    while not task_sd_card.the_SD_card.config:
+        await asyncio.sleep_ms(100)
+    full_mqtt_topic = MQTT_TOPIC + task_sd_card.the_SD_card.config["Site Name"]
+    print(f"Publishing to MQTT topic {full_mqtt_topic}")
+
     while True:
         message = await mqtt_queue.get()
-        await mqtt_client.publish(MQTT_TOPIC, message.encode(), qos=1)
+        await mqtt_client.publish(full_mqtt_topic, message.encode(), qos=1)
 
 
 ## Check if the WiFi is still connected. If not, try to reconnect using the

@@ -36,26 +36,52 @@ version is in MicroPython.
 The C++ ESP32 firmware is in the `WaterSense_Radar_JJH` directory. 
 After cloning this repository, open the `WaterSense_Radar_JJH` directory in a
 VSCode/PlatformIO workspace and you should be able to compile and run the
-ESP32 firmware. 
+ESP32 firmware. It requires custom firmware to be running on the STM32 in
+the XM125 module.
 
 #### MicroPython
 
 For rapid development and testing, MicroPython firmware is provided in the
 `MicroPython` folder.  MicroPython for the ESP32 can be downloaded from:  
-<https://micropython.org/download/ESP32_GENERIC/>.  
+<https://micropython.org/download/ESP32_GENERIC/>  
 The latest release of the `ESP32_GENERIC` software is recommended for our
 Feather circuit boards. 
 
-With MicroPython installed on the ESP32, all the Python source files <!--plus 
-`radar.cfg`--> should be copied to the root directory of the ESP32's MicroPython 
-filesystem, and `radar.cfg` should be copied to the root directory of the SD
-card which will be used for datalogging. Configuration of the system for use at 
-specific sites should require editing of `main.py` and `radar.cfg` only. The 
+With MicroPython installed on the ESP32, all the Python source files should 
+be copied to the root directory of the ESP32's MicroPython filesystem, and 
+`radar.cfg` should be copied to the root directory of the SD card which will 
+be used for data logging. Configuration of the system for use at specific 
+sites should require editing of `main.py` and `radar.cfg` only. The 
 main Python file is edited to disable unneeded tasks; for example, the MQTT 
 task should be turned off (just comment out the `asyncio.create_task()` line)
 at sites where WiFi access and AC power are not available. The radar's range, 
 frequency of data collection, and similar configurations are set in `radar.cfg`
 which can be edited on the SD card. 
+
+#### Configuration with `radar.cfg`
+
+The configuration file is a regular text file saved on the data logging SD card.
+A typical configuration file might look as follows (for 2025-Dec version of the 
+software; configurations are expected to change as the software is improved):
+```txt
+# Configuration file for Bogan Radar
+
+Site Name:           My_Bench   # Name of site; should be one word (no spaces)
+Beginning Distance:  2.0        # Beginning distance (m)
+Ending Distance:     8.0        # Ending distance (m)
+Sensitivity:         500        # Peak threshold sensitivity
+Time Per Point:      5.0        # Time between data points (seconds)
+Awake Time:          0.0        # Time taking data, sec., or 0.0 for always awake
+Cycle Time:          0.0        # Total on-off cycle time, or 0.0 for always awake
+```
+
+_With changes to the value of `SD_DIR` in `task_sd_card.py`, the configuration
+file could be saved in the ESP32's built-in flash; this would make reconfiguration 
+a little harder but protect the configuration from SD card corruption due to power 
+loss, somebody hot swapping the card (bad idea), etc._
+
+If data is sent through MQTT, the MQTT topic is made by appending the site name
+from the configuration file to `bogan_radar/`. 
 
 
 ### STM32 on XM125 Firmware

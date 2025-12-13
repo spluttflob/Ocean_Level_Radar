@@ -68,19 +68,6 @@ batt_v_sensor = machine.ADC(machine.Pin(35), atten=machine.ADC.ATTN_11DB)
 #  On the EZSBC board, the LED turns on when the pin is set low.
 status_LED = machine.Pin(13, machine.Pin.OUT, value=1)
 
-## The one SD card driver object for reading the configuration file and saving
-#  data.
-the_SD_card = task_sd_card.Radar_SD_Card(task_sd_card.SD_DIR + "/radar.cfg")
-
-## A serial interface with which to receive data from the GPS module. The pin
-#  numbers are for the Wave Radar board version 1.3.
-uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0, tx=14, rx=32)
-
-## The one and only GPS module that a cheap ocean wave radar needs.
-the_gps = as_GPS.AS_GPS(asyncio.StreamReader(uart),
-                        local_offset=task_gps.LOCAL_OFFSET,
-                        fix_cb=task_gps.gps_callback)
-
 ## The I2C bus object used to talk to the radar sensor and PCF8523 RTC
 i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
 print(f"I2C devices:", ",".join(f"0x{item:x}" for item in i2c.scan()))
@@ -133,9 +120,9 @@ async def task_radar(data_per_mqtt_msg):
     # Try until we get valid parameters from the configuration dictionary
     while True:
         try:
-            begin_dist_m = the_SD_card.config["Beginning Distance"]
-            end_dist_m = the_SD_card.config["Ending Distance"]
-            sensitivity = int(the_SD_card.config["Sensitivity"])
+            begin_dist_m = task_sd_card.the_SD_card.config["Beginning Distance"]
+            end_dist_m = task_sd_card.the_SD_card.config["Ending Distance"]
+            sensitivity = int(task_sd_card.the_SD_card.config["Sensitivity"])
         except KeyError:
             print("Waiting for radar configuration")
             await asyncio.sleep_ms(5_000)
@@ -191,12 +178,12 @@ async def task_radar(data_per_mqtt_msg):
             last_fix_count += 1
             if last_fix_count > GPS_FIX_PER_SAVE:
                 last_fix_count = 0
-                day, mon, year = the_gps.date
+                day, mon, year = task_gps.the_gps.date
                 year += 2000
-                hrs, mns, scs = the_gps.local_time
-                lat = the_gps.latitude()
-                lon = the_gps.longitude()
-                alt = the_gps.altitude
+                hrs, mns, scs = task_gps.the_gps.local_time
+                lat = task_gps.the_gps.latitude()
+                lon = task_gps.the_gps.longitude()
+                alt = task_gps.the_gps.altitude
                 fix_it = f"G{year}-{mon}-{day},{hrs:02d}:{mns:02d}:{scs:02d},{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt}"
                 await task_sd_card.sd_queue.put(fix_it + "\r\n")
                 await task_mqtt.mqtt_queue.put(fix_it)
@@ -211,7 +198,7 @@ async def task_radar(data_per_mqtt_msg):
 async def main():
     global i2c
 
-    asyncio.create_task(the_SD_card.task_function())
+    asyncio.create_task(task_sd_card.the_SD_card.task_function())
     asyncio.create_task(task_gps.gps_task(i2c))
     asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
     asyncio.create_task(task_mqtt.mqtt_task())
@@ -233,10 +220,10 @@ except KeyboardInterrupt:
     print("Ctrl-C. ", end='')
 except Exception as ohnoes:
     print("Uncaught exception {ohnoes}, rebooting!")
-    the_SD_card.close_data_file()
+    task_sd_card.the_SD_card.close_data_file()
     utime.sleep_ms(500)
 finally:
-    the_SD_card.close_data_file()
+    task_sd_card.the_SD_card.close_data_file()
     asyncio.new_event_loop()
     print("Water level measurement test finished.")
     machine.reset()

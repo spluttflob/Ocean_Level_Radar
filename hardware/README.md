@@ -97,12 +97,17 @@ in the side of the box.
 
 This is an area of ongoing research. The radar may have an optimally tight beam
 if a plastic phase corrector is attached across the bottom (wide) opening of
-the horn antenna, but for initial testing we're trying polypropylene disks made
-from various containers. The cover's ideal width which minimizes reflections of
-the 60GHz signal depends on the material used. The Interwebs seem to say that
-a 1.5mm (about 1/16") sheet of polypropylene would make a decent cover. 
-More will be posted when we have determined what works well. 
+the horn antenna, but for initial testing we're trying polypropylene and
+polyethylene disks made from various containers. The cover's ideal width which 
+minimizes reflections of the 60GHz signal depends on the material used. 
+The Interwebs seem to say that a 1.5mm (about 1/16") sheet of polypropylene 
+would make a good cover. Disks of UHMW polyethylene (we think) cut from a
+Tupperware&trade; bowl lid saved from a dumpster seem to work pretty well too.
+More will be posted when we have conducted more experiments. 
 
 Remember that the cover must be attached to the end of the horn with a 
 watertight connection to protect the sensor from rain, waves, spray, and
-errant organisms. 
+errant organisms. A version of the aluminum horn antenna which has a threaded
+end, combined with a threaded PVC ring that holds a cover firmly against the
+end of the antenna, seems to work well.  We may use a bit of caulk or pipe
+dope to ensure a good seal. 
