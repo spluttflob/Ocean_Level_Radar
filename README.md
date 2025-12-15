@@ -1,5 +1,4 @@
 ![Project logo](Bogan_Radar_Logo_1_inv.png)
-# Inexpensive Millimeter-wave Radar for Ocean Level Measurement
 
 This project aims to create simple and inexpensive designs for measuring 
 ocean level from piers, pilings, trees, or other relatively fixed
