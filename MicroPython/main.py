@@ -21,6 +21,7 @@
 
 import gc
 import utime
+# import queue
 import machine
 from os import sync           # To save files before rebooting
 import uasyncio as asyncio    # Cooperative multitasking, Python style
@@ -30,11 +31,16 @@ import task_sd_card           # For storing data on the Adalogger
 import task_gps               # Reads NMEA strings from a generic GPS module
 import as_xm125_distance      # The radar module
 import task_mqtt              # If messages are sent through Web in real time
+import task_watchdog          # Monitors system and reboots if malfunctioning
 from micropython import const # Constants use a little less memory
 
 
 ## How many milliseconds (approximately) between data points.
 #  This probably ought to be at least 1000 until software has been improved.
+#
+#  WARNING: This rate must be faster than the rate at which the watchdog task
+#  in task_watchdog.py checks the radar task flag, or the watchdog will reboot
+#  the system unnecessarily.
 MS_PER_DATA_POINT = 5000
 
 ## Save location, date, and time directly from GPS once per this many data lines
@@ -64,44 +70,9 @@ batt_v_ctl_pin = machine.Pin(2, machine.Pin.OUT, value=0)
 #  the maximum attenuation so we can read high enough voltages.
 batt_v_sensor = machine.ADC(machine.Pin(35), atten=machine.ADC.ATTN_11DB)
 
-## An indicator LED used by the watchdog task to show things are OK (or not)
-#  On the EZSBC board, the LED turns on when the pin is set low.
-status_LED = machine.Pin(13, machine.Pin.OUT, value=1)
-
 ## The I2C bus object used to talk to the radar sensor and PCF8523 RTC
 i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
 print(f"I2C devices:", ",".join(f"0x{item:x}" for item in i2c.scan()))
-
-
-## @brief   Task function which monitors how the rest of the system is doing.
-#  @details A watchdog timer is used so that if things really go to pieces, the
-#           system will be restarted. The ESP32 watchdog timer is really strict
-#           in that once it has been started, it cannot be stopped or changed.
-async def task_watchdog():
-
-    # Wait a minute before activating the watchdog timer; this allows someone
-    # to Ctrl-C the system after reboot and halt main.py if there is a bug that
-    # would otherwise cause infinitely repeating watchdog timer reboots.
-    await asyncio.sleep_ms(60_000)
-
-    doggo = machine.WDT(timeout=10_000)    # Timeout every 10 seconds
-
-    while True:
-#         # Battery voltage is being wonky on test machine; not using it for now
-#         batt_v_ctl_pin.value(1)            # Turn on voltage divider, wait for
-#         await asyncio.sleep_ms(10)         # it to settle
-#         vbatt = batt_v_sensor.read_uv() * 2.0
-#         batt_v_ctl_pin.value(0)
-
-        status_LED.value(0)                # For the EZSBC feather, 0 is LED on
-        await asyncio.sleep_ms(40)
-        status_LED.value(1)
-
-        if task_gps.valid_datetime:
-            await asyncio.sleep_ms(4950)   # Blink every 5s if valid, 1s if not
-        else:
-            await asyncio.sleep_ms(950)
-        doggo.feed()                       # Ensure the watchdog (timer) is fed
 
 
 ## @brief   The function which manages taking and saving of radar data.
@@ -153,15 +124,27 @@ async def task_radar(data_per_mqtt_msg):
         now = utime.localtime()
         now_str = f"D{now[3]:02d}:{now[4]:02d}:{now[5]:02d}"
 
-        # Print and/or save to SD card the time and measurement
-        await task_sd_card.sd_queue.put(";".join((now_str, prt_str)) + "\r\n")
-        print(";".join((now_str, prt_str)))
+        a_line = ";".join((now_str, prt_str)) + "\r\n"
+        print(a_line, end='')
+
+        # Save to SD card the time and measurement using put_nowait() in case
+        # something has gone wrong with the SD card -- we don't want to block
+        # taking data (and sending it via MQTT if enabled) if the SD card has
+        # a problem
+        if task_sd_card.sd_queue.full():
+            print("Problem: SD Card queue full")
+        else:
+            await task_sd_card.sd_queue.put(a_line)
+
+#         try:
+#             await task_sd_card.sd_queue.put_nowait(a_line + "\r\n")
+#         except queue.QueueFull as qoops:
+#             print(f"Problem sending to SD card queue: {qoops}")
 
         # If using MQTT for real-time cloud storage, assemble a larger string
         # with a number of readings to be sent as one MQTT message
         if data_per_mqtt_msg is not None:
-            mqtt_string += ";".join((now_str, prt_str))
-            mqtt_string += "\r\n"
+            mqtt_string += a_line
             mqtt_count += 1
             if mqtt_count >= data_per_mqtt_msg:
                 mqtt_count = 0
@@ -188,6 +171,7 @@ async def task_radar(data_per_mqtt_msg):
                 await task_sd_card.sd_queue.put(fix_it + "\r\n")
                 await task_mqtt.mqtt_queue.put(fix_it)
 
+        task_watchdog.radar_task_flag = True
         await asyncio.sleep_ms(MS_PER_DATA_POINT)
 
 
@@ -200,10 +184,10 @@ async def main():
 
     asyncio.create_task(task_sd_card.the_SD_card.task_function())
     asyncio.create_task(task_gps.gps_task(i2c))
-    asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
     asyncio.create_task(task_mqtt.mqtt_task())
     asyncio.create_task(task_mqtt.check_WiFi_task())
-    asyncio.create_task(task_watchdog())
+    asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
+    asyncio.create_task(task_watchdog.task_watchdog())
 
     while True:
         await asyncio.sleep_ms(1_000)
@@ -219,11 +203,10 @@ try:
 except KeyboardInterrupt:
     print("Ctrl-C. ", end='')
 except Exception as ohnoes:
-    print("Uncaught exception {ohnoes}, rebooting!")
+    print("Uncaught exception {ohnoes}")
     task_sd_card.the_SD_card.close_data_file()
     utime.sleep_ms(500)
 finally:
     task_sd_card.the_SD_card.close_data_file()
     asyncio.new_event_loop()
     print("Water level measurement test finished.")
-    machine.reset()

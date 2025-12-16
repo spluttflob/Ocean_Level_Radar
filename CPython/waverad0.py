@@ -4,7 +4,8 @@
 #  involving highly complex mathematics...subtraction from a constant.
 #  
 #  @author Spluttflob
-#  @date   2025-Nov-29  Original file
+#  @date   2025-Nov-29  Original file, just rangefinding and testing
+#  @date   2025-Dec-13  Changed from rangefinding to tide level
 #  @copyright (c) 2025 by Spluttflob, released under the GPL V3
 
 import time
@@ -91,15 +92,21 @@ for line in lines:
     if not line:
         pass
 
+    # These lines hold date, time, and location from the GPS
     elif line[0] == 'G':
-        # These lines hold date, time, and location from the GPS
         try_datetime = read_GPS_line(line)
         if try_datetime[0] is not None:
             latest_gps_datetime = try_datetime
 
-    elif line[0] == 'D' and not "NR" in line and latest_gps_datetime[0] is not None: #############
-        # The line should hold time; dist, strength; dist, strength; ...
-        # so parts[0] is time and parts[1], ... are (dist, strength) pairs
+
+    # The line should hold time; dist, strength; dist, strength; ... so parts[0]
+    # is time and parts[1], ... are (dist, strength) pairs.
+    #
+    # TODO: If we don't have a valid date yet, we ignore the data because it's 
+    # too much bother to apply a GPS date to lines previously found. This could
+    # be fixed, applying the discovered date to previous lines.
+    elif line[0] == 'D' and not "NR" in line \
+            and latest_gps_datetime[0] is not None:
         parts = line.lstrip('D').split(';')
 
         try:
@@ -109,8 +116,9 @@ for line in lines:
             # Also get time of day as a time.struct_time object
             when_struct = time.strptime(f"{latest_gps_datetime[0]},{parts[0]}",
                                         "%Y-%m-%d,%H:%M:%S")
-            dt = datetime.datetime(when_struct.tm_year, when_struct.tm_mon, when_struct.tm_mday, when_struct.tm_hour, when_struct.tm_min, when_struct.tm_sec)
-            #dt = datetime.fromtimestamp(calendar.timegm(when_struct))
+            dt = datetime.datetime(when_struct.tm_year, when_struct.tm_mon, 
+                                   when_struct.tm_mday, when_struct.tm_hour, 
+                                   when_struct.tm_min, when_struct.tm_sec)
         except ValueError as ohnoes:
             print(f"Bad time: {parts[0]}")
         else:
@@ -123,22 +131,17 @@ for line in lines:
                     print(f"Bad data: {parts}")
                 else:
                     if when_struct.tm_year > 2024:
-                        times[index].append(when)                      # For now, ignore lines before GPS lock
+                        times[index].append(when)
                         datetimes[index].append(dt)
                         distances[index].append(dist)
                         strengths[index].append(strn)
-                        #print(when_struct)                                    ############################
 
-
-
-
-#exit()
-
-# A formatter for dates on a horizontal axis
+# Create a formatter for dates on horizontal axes - time with date below
 myFmt = mdates.DateFormatter('%m-%d\n%H:%M')
 
 # Plot the data in a handy Matplotlib window for viewing, saving, etc.
-figs, axes = pyplot.subplots(2)
+figs, axes = pyplot.subplots(nrows=2, ncols=1, 
+                             gridspec_kw={'height_ratios': [2, 1]})
 
 heights_meters = [SENSOR_HEIGHT - dist for dist in distances[0]]
 heights_feet = [dist * FEET_PER_METER for dist in heights_meters]

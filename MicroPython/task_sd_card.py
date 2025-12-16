@@ -12,10 +12,11 @@
 
 from utime import localtime
 import uasyncio as asyncio
-from machine import SDCard, Pin  # , RTC
+from machine import SDCard, Pin
 from os import mount, umount, listdir, stat, sync
 from queue import Queue
 import task_gps
+import task_watchdog
 
 
 ## The default configuration of the radar, to be used if it's not possible to
@@ -24,20 +25,20 @@ DEFAULT_CONFIG = \
     {"Site Name":          "Testing",
      "Beginning Distance":  1.0,
      "Ending Distance":     10.0,
-     "Sensitivity":         400,
+     "Sensitivity":         500,
      "Time Per Point":      5.0,
      "Awake Time":          0.0,
      "Cycle Time":          0.0}
 
 ## This queue holds strings of text to be written to the SD card. The 'maxsize'
 #  parameter is the maximum number of items that may be stored in the queue;
-#  a full queue blocks writing, which is quite bad and should be prevented.
-sd_queue = Queue(maxsize=20)
+#  a full queue can block writing, which is quite bad and should be prevented.
+sd_queue = Queue(maxsize=100)
 
 ## How many lines are written to the SD card before we reopen the data file to
 #  ensure that data is actually written to the card, not just held in a memory
 #  buffer to be written when the file is closed
-SD_LINES_PER_SYNC = 12
+SD_LINES_PER_SYNC = 720
 
 ## The directory at which the SD card is mounted.
 SD_DIR = "/sd"
@@ -126,7 +127,7 @@ class Radar_SD_Card:
 
     ## Show the configuration in a somewhat readable way.
     def show_config(self):
-        print("Item                     Value")
+        print("\r\nItem                     Value")
         print("----                     -----")
         for key, value in self.config.items():
             print(f"{key:24s} {value}")
@@ -141,19 +142,22 @@ class Radar_SD_Card:
 
 
     ## Open a data file whose name is based on the current date and time.
-    def open_data_file(self):
-        
-        year, mon, day, wd, hrs, mns, scs, us = task_gps.esp_rtc.datetime()
-        self.data_file_name = SD_DIR + \
-            f"/R_{mon:02d}-{day:02d}_{hrs:02d}{mns:02d}{scs:02d}.txt"
-        print(f"Open file {self.data_file_name}")
-        try:
-            self.data_file = open(self.data_file_name, 'a')
-        except OSError as oops:
-            print(f"Error {oops} opening {self.data_file_name}")
-            self.data_file = None
-        else:
-            self.write_config()
+    #  This is a critical operation, so keep trying until the file can be
+    #  opened, giving other tasks a chance to run in the meantime.
+    async def open_data_file(self):
+        while True:
+            year, mon, day, wd, hrs, mns, scs, us = task_gps.esp_rtc.datetime()
+            self.data_file_name = SD_DIR + \
+                f"/R_{mon:02d}-{day:02d}_{hrs:02d}{mns:02d}{scs:02d}.txt"
+            try:
+                self.data_file = open(self.data_file_name, 'a')
+            except OSError as oops:
+                print(f"Error {oops} opening {self.data_file_name}")
+                self.data_file = None
+                await asyncio.sleep_ms(100)
+            else:
+                self.write_config()
+                break
 
 
     ## Close the data file.
@@ -164,9 +168,23 @@ class Radar_SD_Card:
 
 
     ## Close and reopen the data file to force data to be written to the card.
-    def reopen_data_file(self):
-        self.data_file.close()
-        self.data_file = open(self.data_file_name, 'a')
+    #  If something goes wrong, retry indefinitely while giving other tasks a
+    #  chance to run.
+    async def reopen_data_file(self):
+        while True:
+            try:
+                self.data_file.close()
+            except OSError:
+                await asyncio.sleep_ms(100)
+            else:
+                break
+        while True:
+            try:
+                self.data_file = open(self.data_file_name, 'a')
+            except OSError:
+                await asyncio.sleep_ms(100)
+            else:
+                break
         print(f"File {self.data_file_name} reopened")
 
 
@@ -180,13 +198,18 @@ class Radar_SD_Card:
     #    * 1 - SD card detected; open it and read configuration file
     #    * 2 - Wait for date and time to be available, then open data file
     #    * 3 - SD card present and open; save data when available
-    async def task_function(self):
+    #
+    #  @param skip_datetime_check For testing, don't wait for valid date/time
+    async def task_function(self, skip_datetime_check=False):
 
         global valid_datetime                 # True if GPS fix recently made
         
         lines_before_sync = 0                 # Lines written before os.sync()
 
         while True:
+            # No matter the state, we must feed the watchdog task or be rebooted
+            task_watchdog.sd_card_task_flag = True
+
             if self.state == 0:               # Check if a card is present
                 try:
                     mount(self.sdcard, SD_DIR)
@@ -210,14 +233,14 @@ class Radar_SD_Card:
                     await asyncio.sleep_ms(500)
 
             elif self.state == 2:             # Check if date & time are known
-                if task_gps.valid_datetime:
+                if task_gps.valid_datetime or skip_datetime_check:
                     self.state = 3            # state 3
-                    self.open_data_file()
+                    await self.open_data_file()
                     await asyncio.sleep_ms(100)
                 else:
                     await asyncio.sleep_ms(200)
 
-            elif self.state == 3:                # Save data unless card removed
+            elif self.state == 3:             # Save data unless card removed
                 text_line = await sd_queue.get()
                 if text_line and self.data_file:
                     try:
@@ -226,10 +249,11 @@ class Radar_SD_Card:
                         lines_before_sync += 1
                         if lines_before_sync > SD_LINES_PER_SYNC:
                             lines_before_sync = 0
-                            self.reopen_data_file()
-                    except OSError:
+                            await self.reopen_data_file()
+                    except OSError as foops:
+                        print(f"Problem saving to data file: {foops}")
                         self.state = 0           # Oops, card's gone or hosed
-                await asyncio.sleep_ms(100)
+                await asyncio.sleep_ms(10)
 
 
 ## The one SD card driver object which will be accessed from other tasks in
@@ -244,23 +268,26 @@ if __name__ == "__main__":
 
     print(f"Task SD Card Test, asyncio {'.'.join(map(str, asyncio.__version__))}")
 
-    # Simulate a task sending data to be recorded; just use time from the RTC
+    # Simulate a task sending data to be recorded; just use time from the RTC.
+    # We're going to beat the heck out of the SD card to see if we can reproduce
+    # errors that have been causing the wave radar to stop working
     async def sim_data_task():
+        count = 0
         while True:
             now = utime.localtime()
             now_str = f"{now[3]:02d}:{now[4]:02d}:{now[5]:02d}\r\n"
             await sd_queue.put(now_str)
-#             print(now_str)
-            await asyncio.sleep_ms(5_000)
+            count += 1
+            if count % 10 == 0:
+                print(now_str, end='')
+            await asyncio.sleep_ms(100)
 
 
     # Run the task function as a test.
     async def main():
-        asyncio.create_task(the_SD_card.task_function())
+        asyncio.create_task(the_SD_card.task_function(skip_datetime_check=True))
         asyncio.create_task(sim_data_task())
 
-        await asyncio.sleep_ms(10_000)
-#         the_SD_card.set_valid_datetime(True)  # Simulate GPS fix and RTC setting
         while True:
             await asyncio.sleep_ms(1_000)
 

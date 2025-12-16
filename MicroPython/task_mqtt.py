@@ -14,6 +14,7 @@ from network import WLAN, STA_IF
 import uasyncio as asyncio
 from mqtt_as import MQTTClient, config
 import task_sd_card                           # The site name is in config here
+import task_watchdog
 
 
 ## The first part of the MQTT topic to which we're sending data.
@@ -41,9 +42,7 @@ net_station = None
 #  @param password The password used to get on that network
 #  @returns The network station, hopefully up and running
 async def web_up(ssid, password):
-    
     global net_station
-
     if not net_station:
         net_station = WLAN(STA_IF)
 
@@ -53,7 +52,7 @@ async def web_up(ssid, password):
     else:
         while True:
             try:
-                print("Connecting to interwebs.", end='')
+                print(f"Connecting to LAN {ssid}.", end='')
                 net_station.active(True)
                 net_station.connect(ssid, password)
                 for count in range(60):
@@ -79,6 +78,7 @@ async def web_up(ssid, password):
 
 ## Shut down the web connection.
 def web_down():
+    global net_station
     if net_station:
         net_station.disconnect()
         net_station.active(False)
@@ -153,7 +153,7 @@ async def check_WiFi_task():
         await asyncio.sleep_ms(60000)          # Check every minute
 
         if net_station and not net_station.isconnected():
-            web_down(net_station)
+            web_down()
             await asyncio.sleep_ms(1000)
             ssid, password = get_LAN_certs('mqtt')
             net_station = await web_up(ssid, password)
