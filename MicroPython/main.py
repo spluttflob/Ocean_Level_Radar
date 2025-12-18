@@ -21,9 +21,9 @@
 
 import gc
 import utime
-# import queue
 import machine
-from os import sync           # To save files before rebooting
+import periodic
+from micropython import const # Constants use a little less memory
 import uasyncio as asyncio    # Cooperative multitasking, Python style
 import as_GPS                 # Asyncio driver for GPS parsing
 import pcf8523                # Real-time clock on the Adalogger
@@ -32,7 +32,7 @@ import task_gps               # Reads NMEA strings from a generic GPS module
 import as_xm125_distance      # The radar module
 import task_mqtt              # If messages are sent through Web in real time
 import task_watchdog          # Monitors system and reboots if malfunctioning
-from micropython import const # Constants use a little less memory
+import task_web               # Makes data files available on web pages
 
 
 ## How many milliseconds (approximately) between data points.
@@ -83,6 +83,9 @@ print(f"I2C devices:", ",".join(f"0x{item:x}" for item in i2c.scan()))
 #  @param   data_per_mqtt_msg The number of readings per MQTT message sent, or
 #           None if we're not using MQTT at all
 async def task_radar(data_per_mqtt_msg):
+
+    # Set up a periodic scheduler object which minimizes clock drift
+    perd = periodic.PeriodicDelay(period_ms=MS_PER_DATA_POINT)
 
     # Create the radar object. GPIO 27 is the WAKE pin of the radar
     radar = as_xm125_distance.XM125Distance(i2c, RADAR_WAKE_PIN_NUM)
@@ -172,7 +175,9 @@ async def task_radar(data_per_mqtt_msg):
                 await task_mqtt.mqtt_queue.put(fix_it)
 
         task_watchdog.radar_task_flag = True
-        await asyncio.sleep_ms(MS_PER_DATA_POINT)
+
+        # Wait the correct duration so this task runs at the next sampling time
+        await perd.wait_next()
 
 
 ## @brief   The function which creates and runs each of the task functions.
@@ -188,6 +193,7 @@ async def main():
     asyncio.create_task(task_mqtt.check_WiFi_task())
     asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
     asyncio.create_task(task_watchdog.task_watchdog())
+    asyncio.create_task(task_web.file_server_task())
 
     while True:
         await asyncio.sleep_ms(1_000)

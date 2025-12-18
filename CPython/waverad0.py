@@ -11,6 +11,7 @@
 import time
 import datetime
 import argparse
+from os import path
 from matplotlib import pyplot
 import matplotlib.dates as mdates
 
@@ -26,11 +27,16 @@ PLOT_Y_MAX = 8.0
 FEET_PER_METER = 3.28084
 
 # Get the name of the file whose data is to be plotted from the command
-parser = argparse.ArgumentParser(description='Wave Radar Data Plot Parameters')
-parser.add_argument("input_file", help="Name of radar data file to read")
+parser = argparse.ArgumentParser(description="Wave Radar Data Plot Parameters")
+parser.add_argument("input_file", 
+                    help="Name of radar data file to read")
+parser.add_argument("-c", "--write_csv", action="store_true",
+                    help="Write CSV of time and height only")
+parser.add_argument("-n", "--no_plots", action="store_true",
+                    help="Don't make plots (for testing)")
 args = parser.parse_args()
 
-times = []
+#times = []
 maxhits = 0
 
 
@@ -72,8 +78,6 @@ for line in lines:
         n_hits = len(parts) - 1
         if n_hits > maxhits:
             maxhits = n_hits
-
-    # TODO: Deal with GPS lines here
 
 print(f"Longest line: {maxhits} hits")
 
@@ -136,29 +140,43 @@ for line in lines:
                         distances[index].append(dist)
                         strengths[index].append(strn)
 
-# Create a formatter for dates on horizontal axes - time with date below
-myFmt = mdates.DateFormatter('%m-%d\n%H:%M')
-
-# Plot the data in a handy Matplotlib window for viewing, saving, etc.
-figs, axes = pyplot.subplots(nrows=2, ncols=1, 
-                             gridspec_kw={'height_ratios': [2, 1]})
-
+# Find tide heights from the measured distances to the water
 heights_meters = [SENSOR_HEIGHT - dist for dist in distances[0]]
 heights_feet = [dist * FEET_PER_METER for dist in heights_meters]
 
-axes[0].plot(datetimes[0], heights_feet, '.')
-axes_m = axes[0].twinx()
-axes[1].plot(datetimes[0], strengths[0], '.')
+# If asked to write just times and tide heights into a simple CSV, do so now
+if args.write_csv:
 
-for ax in axes: ax.grid(True, linestyle='--')
-axes[0].set_title("Radar Distance Measurements")
-axes[0].xaxis.set_major_formatter(myFmt)
-axes[0].set_ylabel("Height Above Mean Low (ft)")
-axes_m.set_ylabel("Height Above Mean Low (m)")
-axes[0].set_ylim(PLOT_Y_MIN, PLOT_Y_MAX)
-axes_m.set_ylim(PLOT_Y_MIN / FEET_PER_METER, PLOT_Y_MAX / FEET_PER_METER)
-axes[1].set_xlabel("Time of Day (hrs)")
-axes[1].xaxis.set_major_formatter(myFmt)
-axes[1].set_ylabel("Signal Strength (dB?)")
-pyplot.show()
+    csv_file_name = path.splitext(args.input_file)[0] + "_tide.csv"
+    print(f"Creating CSV file '{csv_file_name}'")
+    with open(csv_file_name, 'w') as csv_file:
+        csv_file.write("Time\tTide Height\r\n")
+        for time, tide in zip(times[0], heights_meters):
+            csv_file.write(f"{time * 3600:.1f},{tide:.3f}\r\n")
+
+# If plots haven't been turned off, make and display the plot
+if not args.no_plots:
+
+    # Create a formatter for dates on horizontal axes - time with date below
+    myFmt = mdates.DateFormatter('%m-%d\n%H:%M')
+
+    # Plot the data in a handy Matplotlib window for viewing, saving, etc.
+    figs, axes = pyplot.subplots(nrows=2, ncols=1, 
+                                gridspec_kw={'height_ratios': [2, 1]})
+
+    axes[0].plot(datetimes[0], heights_feet, '.')
+    axes_m = axes[0].twinx()
+    axes[1].plot(datetimes[0], strengths[0], '.')
+
+    for ax in axes: ax.grid(True, linestyle='--')
+    axes[0].set_title("Radar Distance Measurements")
+    axes[0].xaxis.set_major_formatter(myFmt)
+    axes[0].set_ylabel("Height Above Mean Low (ft)")
+    axes_m.set_ylabel("Height Above Mean Low (m)")
+    axes[0].set_ylim(PLOT_Y_MIN, PLOT_Y_MAX)
+    axes_m.set_ylim(PLOT_Y_MIN / FEET_PER_METER, PLOT_Y_MAX / FEET_PER_METER)
+    axes[1].set_xlabel("Time of Day (hrs)")
+    axes[1].xaxis.set_major_formatter(myFmt)
+    axes[1].set_ylabel("Signal Strength (dB?)")
+    pyplot.show()
 

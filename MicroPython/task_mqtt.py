@@ -10,7 +10,7 @@
 import queue
 import esp32
 import socket
-from network import WLAN, STA_IF
+from network import WLAN, STA_IF, AP_IF
 import uasyncio as asyncio
 from mqtt_as import MQTTClient, config
 import task_sd_card                           # The site name is in config here
@@ -36,6 +36,10 @@ mqtt_queue = queue.Queue()
 ## The network station, our node on the LAN
 net_station = None
 
+## A flag to wait for the web task to start before MQTT task does. This flag is
+#  set by the web server task. If not using the web server task, set this flag
+#  to True here and it won't get in the way.
+web_start_done = False
 
 ## Connect to the given LAN using the given SSID and password.
 #  @param ssid The network SSID
@@ -43,6 +47,13 @@ net_station = None
 #  @returns The network station, hopefully up and running
 async def web_up(ssid, password):
     global net_station
+
+    # Make sure there's no access point taking up memory, recommends ChatGPT
+    ap = WLAN(AP_IF)
+    if ap.active():
+        ap.active(False)
+
+    # Make sure there's a LAN station, and get it connected
     if not net_station:
         net_station = WLAN(STA_IF)
 
@@ -52,7 +63,7 @@ async def web_up(ssid, password):
     else:
         while True:
             try:
-                print(f"Connecting to LAN {ssid}.", end='')
+                print(f"Connecting to LAN {ssid}")
                 net_station.active(True)
                 net_station.connect(ssid, password)
                 for count in range(60):
@@ -61,7 +72,7 @@ async def web_up(ssid, password):
                         await asyncio.sleep_ms(1000)
                         count += 1
                     else:
-                        print(f"connected as {net_station.ifconfig()[0]}")
+                        print(f"Connected as {net_station.ifconfig()[0]}")
                         return
 
                 # If we get here, we've timed out, so start over
@@ -114,9 +125,17 @@ def get_LAN_certs(namespace):
 #  published to the subscribed MQTT broker.
 async def mqtt_task():
 
+    global net_station
+
     print('Starting mqtt_task()...', end='')
     ssid, password = get_LAN_certs('mqtt')
-    net_station = await web_up(ssid, password)
+    await web_up(ssid, password)
+    await mqtt_queue.put(f"Connected as {net_station.ifconfig()[0]}")
+
+    # Wait until the web server task has set this flag to True, or if there is
+    # no web server task, this flag should have been set True above
+    while not web_start_done:
+        await asyncio.sleep_ms(100)
 
     # Set up the MQTT client object to be passed to the MQTT task
     config['ssid'] = ssid

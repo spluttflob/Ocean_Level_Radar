@@ -148,7 +148,7 @@ class Radar_SD_Card:
         while True:
             year, mon, day, wd, hrs, mns, scs, us = task_gps.esp_rtc.datetime()
             self.data_file_name = SD_DIR + \
-                f"/R_{mon:02d}-{day:02d}_{hrs:02d}{mns:02d}{scs:02d}.txt"
+                f"/R_{mon:02d}-{day:02d}_{hrs:02d}{mns:02d}{scs:02d}.sacsv"
             try:
                 self.data_file = open(self.data_file_name, 'a')
             except OSError as oops:
