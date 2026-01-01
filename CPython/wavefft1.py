@@ -41,13 +41,7 @@ def load_time_series(csv_path, delimiter=",", skiprows=0):
     return t, x
 
 
-def compute_lomb_scargle_spectrum(
-    t,
-    x,
-    f_min=None,
-    f_max=None,
-    n_freqs=2000,
-):
+def compute_lomb_scargle_spectrum(t, x, f_min=None, f_max=None, n_freqs=2000):
     """
     Compute a spectrum for non-uniformly sampled data using Lomb–Scargle.
 
@@ -126,14 +120,14 @@ def main():
     plt.grid(True)
     plt.tight_layout()
 
-    # Optionally: plot power spectrum, too
-    plt.figure()
-    plt.plot(freqs, power)
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Power (normalized)")
-    plt.title(f"Lomb–Scargle Power Spectrum of {csv_path.name}")
-    plt.grid(True)
-    plt.tight_layout()
+    ## Optionally: plot power spectrum, too
+    #plt.figure()
+    #plt.plot(freqs, power)
+    #plt.xlabel("Frequency (Hz)")
+    #plt.ylabel("Power (normalized)")
+    #plt.title(f"Lomb–Scargle Power Spectrum of {csv_path.name}")
+    #plt.grid(True)
+    #plt.tight_layout()
 
     plt.show()
 
