@@ -9,6 +9,7 @@
 #  @date   2025-Dec-15  Original file split from main.py
 #  @copyright (c) 2025 by Spluttflob, released under the GPL V3
 
+import gc
 from machine import Pin, WDT, reset
 import uasyncio as asyncio
 from utime import sleep_ms, ticks_ms, ticks_diff
@@ -77,7 +78,7 @@ async def task_watchdog():
                 await asyncio.sleep_ms(1_000)
                 reset()
             else:
-                print("Watchdog check passed.")
+                print(f"Watchdog check passed, {gc.mem_free()}B free.")
 
             radar_task_flag = False
             sd_card_task_flag = False

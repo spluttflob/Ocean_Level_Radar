@@ -7,6 +7,7 @@
 #  @date   2025-Nov-23  Original file, borrowing from earlier project by author
 #  @copyright (c) 2025 by Spluttflob, released under the GPL V3
 
+import gc
 import queue
 import esp32
 import socket
@@ -36,6 +37,9 @@ mqtt_queue = queue.Queue()
 ## The network station, our node on the LAN
 net_station = None
 
+## The last number in the IP address, sent to help user find this thing on LAN
+ip_node = None
+
 ## A flag to wait for the web task to start before MQTT task does. This flag is
 #  set by the web server task. If not using the web server task, set this flag
 #  to True here and it won't get in the way.
@@ -46,12 +50,18 @@ web_start_done = False
 #  @param password The password used to get on that network
 #  @returns The network station, hopefully up and running
 async def web_up(ssid, password):
-    global net_station
+    global net_station, ip_node
 
     # Make sure there's no access point taking up memory, recommends ChatGPT
-    ap = WLAN(AP_IF)
-    if ap.active():
-        ap.active(False)
+    try:
+        ap = WLAN(AP_IF)
+        if ap.active():
+            ap.active(False)
+        del ap
+    except OSError as blah:
+        print(f"Error deactivating access point: {blah}")
+    gc.collect()
+    print(f"Memory prior to WLAN: {gc.mem_free()}")
 
     # Make sure there's a LAN station, and get it connected
     if not net_station:
@@ -59,8 +69,9 @@ async def web_up(ssid, password):
 
     if net_station.isconnected():
         print(f"Already connected as {net_station.ifconfig()[0]}")
-
     else:
+        net_station.active(False)       # Turn it off and on again
+        await asyncio.sleep_ms(10)
         while True:
             try:
                 print(f"Connecting to LAN {ssid}")
@@ -72,7 +83,8 @@ async def web_up(ssid, password):
                         await asyncio.sleep_ms(1000)
                         count += 1
                     else:
-                        print(f"Connected as {net_station.ifconfig()[0]}")
+                        ip_node = int(net_station.ifconfig()[0].split('.')[-1])
+                        print(f"Connected as {net_station.ifconfig()[0]} Node {ip_node}")
                         return
 
                 # If we get here, we've timed out, so start over
@@ -89,12 +101,13 @@ async def web_up(ssid, password):
 
 ## Shut down the web connection.
 def web_down():
-    global net_station
+    global net_station, ip_node
     if net_station:
         net_station.disconnect()
         net_station.active(False)
     else:
         print("web_down(): No active WiFi station")
+    ip_node = None
 
 
 ## MQTT callback, not used (I think).
@@ -130,7 +143,6 @@ async def mqtt_task():
     print('Starting mqtt_task()...', end='')
     ssid, password = get_LAN_certs('mqtt')
     await web_up(ssid, password)
-    await mqtt_queue.put(f"Connected as {net_station.ifconfig()[0]}")
 
     # Wait until the web server task has set this flag to True, or if there is
     # no web server task, this flag should have been set True above
@@ -161,6 +173,7 @@ async def mqtt_task():
     while True:
         message = await mqtt_queue.get()
         await mqtt_client.publish(full_mqtt_topic, message.encode(), qos=1)
+        del message
 
 
 ## Check if the WiFi is still connected. If not, try to reconnect using the

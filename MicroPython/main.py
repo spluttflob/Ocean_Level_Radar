@@ -125,7 +125,7 @@ async def task_radar(data_per_mqtt_msg):
 
         # Immediately after measurement, record time from real-time clock
         now = utime.localtime()
-        now_str = f"D{now[3]:02d}:{now[4]:02d}:{now[5]:02d}"
+        now_str = f"D{now[0]:04d}-{now[1]:02d}-{now[2]:02d}T{now[3]:02d}:{now[4]:02d}:{now[5]:02d}"
 
         a_line = ";".join((now_str, prt_str)) + "\r\n"
         print(a_line, end='')
@@ -170,9 +170,13 @@ async def task_radar(data_per_mqtt_msg):
                 lat = task_gps.the_gps.latitude()
                 lon = task_gps.the_gps.longitude()
                 alt = task_gps.the_gps.altitude
-                fix_it = f"G{year}-{mon}-{day},{hrs:02d}:{mns:02d}:{scs:02d},{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt}"
+                fix_it = f"G{year}-{mon}-{day},{hrs:02d}:{mns:02d}:{scs:02d},{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt},{task_mqtt.ip_node}"
                 await task_sd_card.sd_queue.put(fix_it + "\r\n")
                 await task_mqtt.mqtt_queue.put(fix_it)
+
+        # We're having memory allocation errors on classic ESP32 sometimes. Try
+        # to keep memory well managed to prevent such errors
+        gc.collect()
 
         task_watchdog.radar_task_flag = True
 
@@ -187,30 +191,39 @@ async def task_radar(data_per_mqtt_msg):
 async def main():
     global i2c
 
+    # MQTT and web tasks are only used if the device will be on a LAN reporting
+    # data in real time; if on solar at a remote site, comment out these tasks
+    # Create MQTT task first and wait for the network to get going
+    asyncio.create_task(task_mqtt.mqtt_task())
+    while not task_mqtt.net_station or not task_mqtt.net_station.isconnected():
+        await asyncio.sleep_ms(10)
+    #    
+    asyncio.create_task(task_mqtt.check_WiFi_task())
+#     asyncio.create_task(task_web.file_server_task())
+
+    # Wait for the WiFi using tasks to get stable before running other tasks. 
+    await asyncio.sleep_ms(2_000)
+
     asyncio.create_task(task_sd_card.the_SD_card.task_function())
     asyncio.create_task(task_gps.gps_task(i2c))
-    asyncio.create_task(task_mqtt.mqtt_task())
-    asyncio.create_task(task_mqtt.check_WiFi_task())
     asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
     asyncio.create_task(task_watchdog.task_watchdog())
-    asyncio.create_task(task_web.file_server_task())
 
     while True:
         await asyncio.sleep_ms(1_000)
 
 
-# Run the main program here. If we're doing a test, the program may be stopped
+# Run the main function here. If we're doing a test, the program may be stopped
 # by pressing Ctrl-C. For normal measurements, just leave it running for days,
 # weeks, or months on end. An uncaught exception causes a file closing to save
-# data to the SD card, then a reboot to restart the whole program
+# data to the SD card if possible, then a reboot to restart the whole program
 print("Beginning Bogan Radar water level measurements.")
 try:
     asyncio.run(main())
 except KeyboardInterrupt:
     print("Ctrl-C. ", end='')
 except Exception as ohnoes:
-    print("Uncaught exception {ohnoes}")
-    task_sd_card.the_SD_card.close_data_file()
+    print(f"Uncaught exception {ohnoes}")
     utime.sleep_ms(500)
 finally:
     task_sd_card.the_SD_card.close_data_file()
