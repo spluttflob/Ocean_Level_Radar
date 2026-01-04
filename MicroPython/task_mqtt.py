@@ -5,114 +5,32 @@
 #
 #  @author Spluttflob
 #  @date   2025-Nov-23  Original file, borrowing from earlier project by author
+#  @date   2026-Jan-01  Moved networking to task_network.py; using databatch.py
 #  @copyright (c) 2025 by Spluttflob, released under the GPL V3
 
 import gc
-import queue
-import esp32
-import socket
-from network import WLAN, STA_IF, AP_IF
 import uasyncio as asyncio
 from mqtt_as import MQTTClient, config
-import task_sd_card                           # The site name is in config here
-import task_watchdog
+import task_network
 
 
 ## The first part of the MQTT topic to which we're sending data.
 #  The site name will be added to this to get the full topic name.
 MQTT_TOPIC = b"bogan_radar/"
 
+## The second part of the MQTT topic, the site name.
+#  Set a default here which can be overridden by the site from the site
+#  configuration file on the SD card, if there is one.
+mqtt_site = b"test0"
+
 ## The MQTT server ("broker") to which messages are sent
-MQTT_SERVER = "test.mosquitto.org"
+MQTT_SERVER = "192.168.2.87"
 
 ## The port on the MQTT server to be used
 MQTT_PORT = 1883
 
-## The namespace in the ESP32's NVS where network SSID and password are stored
-CERTS_NAMESPACE = "mqtt"
-
-## A queue which holds strings to be sent to the MQTT server
-mqtt_queue = queue.Queue()
-
-## The network station, our node on the LAN
-net_station = None
-
-## The last number in the IP address, sent to help user find this thing on LAN
-ip_node = None
-
-## A flag to wait for the web task to start before MQTT task does. This flag is
-#  set by the web server task. If not using the web server task, set this flag
-#  to True here and it won't get in the way.
-web_start_done = False
-
-## Connect to the given LAN using the given SSID and password.
-#  @param ssid The network SSID
-#  @param password The password used to get on that network
-#  @returns The network station, hopefully up and running
-async def web_up(ssid, password):
-    global net_station, ip_node
-
-    # Make sure there's no access point taking up memory, recommends ChatGPT
-    try:
-        ap = WLAN(AP_IF)
-        if ap.active():
-            ap.active(False)
-        del ap
-    except OSError as blah:
-        print(f"Error deactivating access point: {blah}")
-    gc.collect()
-    print(f"Memory prior to WLAN: {gc.mem_free()}")
-
-    # Make sure there's a LAN station, and get it connected
-    if not net_station:
-        net_station = WLAN(STA_IF)
-
-    if net_station.isconnected():
-        print(f"Already connected as {net_station.ifconfig()[0]}")
-    else:
-        net_station.active(False)       # Turn it off and on again
-        await asyncio.sleep_ms(10)
-        while True:
-            try:
-                print(f"Connecting to LAN {ssid}")
-                net_station.active(True)
-                net_station.connect(ssid, password)
-                for count in range(60):
-                    if not net_station.isconnected():
-                        print('.', end='')
-                        await asyncio.sleep_ms(1000)
-                        count += 1
-                    else:
-                        ip_node = int(net_station.ifconfig()[0].split('.')[-1])
-                        print(f"Connected as {net_station.ifconfig()[0]} Node {ip_node}")
-                        return
-
-                # If we get here, we've timed out, so start over
-                print("timeout; retry.")
-                net_station.disconnect()
-                net_station.active(False)
-                await asyncio.sleep_ms(1000)
-
-            except KeyboardInterrupt:
-                net_station.disconnect()
-                net_station.active(False)
-                print("canceled.")
-
-
-## Shut down the web connection.
-def web_down():
-    global net_station, ip_node
-    if net_station:
-        net_station.disconnect()
-        net_station.active(False)
-    else:
-        print("web_down(): No active WiFi station")
-    ip_node = None
-
-
-## MQTT callback, not used (I think).
-def callback(topic, msg, retained):
-    print(topic, msg, retained)
+# ## A queue which holds strings to be sent to the MQTT server
+# mqtt_queue = queue.Queue()
 
 
 ## Connection handler? Something like that. Seems not to be used.
@@ -120,43 +38,28 @@ async def conn_han(client):
     await client.subscribe('foo_topic', 1)
 
 
-## Get the LAN's SSID and password from where they're stored in ESP32 NVS
-#  @param namespace The NVS namespace where the LAN information is stored
-def get_LAN_certs(namespace):
-    nvs = esp32.NVS(namespace)
-    tempbuf = bytearray(42)                  # Maximum length of a passphrase
-    size = nvs.get_blob(b'ssid', tempbuf)
-    ssid = tempbuf[:size].decode()
-    size = nvs.get_blob(b'pswd', tempbuf)
-    passy = tempbuf[:size].decode()
-    return ssid, passy
+## MQTT callback, not used (I think).
+def callback(topic, msg, retained):
+    print(topic, msg, retained)
 
 
 ## Task that sends MQTT messages about radar distance measurements.
 #  The messages are delivered in queue mqtt_queue; messages are kept in the
 #  queue until a specified number have arrived, at which time the messages are
 #  published to the subscribed MQTT broker.
-async def mqtt_task():
-
-    global net_station
+#  @param data_batch A data batch holder that keeps sets of data to be sent
+async def mqtt_task(data_batch):
 
     print('Starting mqtt_task()...', end='')
-    ssid, password = get_LAN_certs('mqtt')
-    await web_up(ssid, password)
 
-    # Wait until the web server task has set this flag to True, or if there is
-    # no web server task, this flag should have been set True above
-    while not web_start_done:
-        await asyncio.sleep_ms(100)
-
-    # Set up the MQTT client object to be passed to the MQTT task
-    config['ssid'] = ssid
-    config['wifi_pw'] = password
-    config['subs_cb'] = callback
-    config['connect_coro'] = conn_han
-    config['server'] = MQTT_SERVER
-    config['port'] = MQTT_PORT
-    MQTTClient.DEBUG = True             # Optional: print diagnostic messages
+    # Set up the MQTT client object
+    config["ssid"] = "NOSSID"
+    config["wifi_pw"] = "NOPASS"
+    config["subs_cb"] = callback
+    config["connect_coro"] = conn_han
+    config["server"] = MQTT_SERVER
+    config["port"] = MQTT_PORT
+    MQTTClient.DEBUG = True              # Optional: print diagnostic messages
     mqtt_client = MQTTClient(config)
 
     print(f"Connecting to MQTT server {MQTT_SERVER} port {MQTT_PORT}...")
@@ -165,70 +68,40 @@ async def mqtt_task():
 
     # Get the site name from the configuration file and add it to the general
     # topic to get the full topic name for the MQTT broker
-    while not task_sd_card.the_SD_card.config:
-        await asyncio.sleep_ms(100)
-    full_mqtt_topic = MQTT_TOPIC + task_sd_card.the_SD_card.config["Site Name"]
+    full_mqtt_topic = MQTT_TOPIC + mqtt_site
     print(f"Publishing to MQTT topic {full_mqtt_topic}")
 
     while True:
-        message = await mqtt_queue.get()
+        message = await data_batch.get()
         await mqtt_client.publish(full_mqtt_topic, message.encode(), qos=1)
-        del message
-
-
-## Check if the WiFi is still connected. If not, try to reconnect using the
-#  @c web_up() and @c web_down() functions in @c boot.py.
-async def check_WiFi_task():
-    global net_station
-
-    while True:
-        await asyncio.sleep_ms(60000)          # Check every minute
-
-        if net_station and not net_station.isconnected():
-            web_down()
-            await asyncio.sleep_ms(1000)
-            ssid, password = get_LAN_certs('mqtt')
-            net_station = await web_up(ssid, password)
-        elif not net_station:
-            ssid, password = get_LAN_certs('mqtt')
-            net_station = await web_up(ssid, password)
-        else:
-            print("WiFi OK")
+        data_batch.done()
 
 
 if __name__ == "__main__":
 
-    ## Create some data (just counting numbers) and put it in the queue
-    async def test_data_task():
-        global mqtt_queue
+    import databatch
 
+    ## Create some data (just counting numbers) and put it in the queue
+    async def test_data_task(d_batch):
         count = 0
-        mqtt_string = ""
-        mqtt_count = 0
         while True:
-            astr = f"Count: {count}\r\n"
-            print(astr, end='')
             count += 1
-            mqtt_count += 1
-            mqtt_string += astr
-            if mqtt_count >= 5:
-                await mqtt_queue.put(mqtt_string)
-                mqtt_count = 0
-                mqtt_string = ""
+            await d_batch.put(f"Count: {count} ")
             await asyncio.sleep_ms(1000)
 
-
-    print("Testing MQTT node for Bogan Radar")
 
     ## Get the task functions running, then twiddle thumbs until Control-C'ed.
     async def main():
-        asyncio.create_task(mqtt_task())
-        asyncio.create_task(check_WiFi_task())
-        asyncio.create_task(test_data_task())
+        batch = databatch.DataBatch(batch_size=5, n_consumers=1)
+
+        asyncio.create_task(task_network.check_WiFi_task())
+        asyncio.create_task(mqtt_task(batch))
+        asyncio.create_task(test_data_task(batch))
 
         while True:
             await asyncio.sleep_ms(1000)
 
+    print("Testing MQTT node for Bogan Radar")
     try:
         asyncio.run(main())
 
@@ -237,7 +110,7 @@ if __name__ == "__main__":
 
     finally:
         asyncio.new_event_loop()             # Clear retained state
-        web_down()
+        task_network.web_down(None)
         print("Exiting")
 
 

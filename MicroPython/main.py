@@ -25,6 +25,7 @@ import machine
 import periodic
 from micropython import const # Constants use a little less memory
 import uasyncio as asyncio    # Cooperative multitasking, Python style
+import databatch              # Store batches of data to be saved and/or sent
 import as_GPS                 # Asyncio driver for GPS parsing
 import pcf8523                # Real-time clock on the Adalogger
 import task_sd_card           # For storing data on the Adalogger
@@ -49,7 +50,7 @@ GPS_FIX_PER_SAVE = const(60)
 ## @brief   The number of data points per MQTT messsage.
 #  @details This is used so we're not continuously spamming the MQTT broker,
 #  instead giving it a larger message less frequently.
-POINTS_PER_MQTT_MESSAGE = const(60)
+POINTS_PER_DATA_BATCH = const(60)
 
 ## How many MQTT messages between MQTT "hello" messages that say what this data
 #  is about. We may use public MQTT brokers, so anyone might read the data
@@ -191,20 +192,25 @@ async def task_radar(data_per_mqtt_msg):
 async def main():
     global i2c
 
+    # Create an object to store data in batches, then send batches to SD card,
+    # MQTT, and other task(s) that save or send data. Parameters are number of
+    # data per batch and number of tasks that use the data
+    batch = databatch.DataBatch(POINTS_PER_DATA_BATCH, 2)
+
     # MQTT and web tasks are only used if the device will be on a LAN reporting
     # data in real time; if on solar at a remote site, comment out these tasks
     # Create MQTT task first and wait for the network to get going
-    asyncio.create_task(task_mqtt.mqtt_task())
+    asyncio.create_task(task_mqtt.mqtt_task(batch))
     while not task_mqtt.net_station or not task_mqtt.net_station.isconnected():
         await asyncio.sleep_ms(10)
-    #    
+
     asyncio.create_task(task_mqtt.check_WiFi_task())
 #     asyncio.create_task(task_web.file_server_task())
 
     # Wait for the WiFi using tasks to get stable before running other tasks. 
     await asyncio.sleep_ms(2_000)
 
-    asyncio.create_task(task_sd_card.the_SD_card.task_function())
+    asyncio.create_task(task_sd_card.the_SD_card.task_function(batch))
     asyncio.create_task(task_gps.gps_task(i2c))
     asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
     asyncio.create_task(task_watchdog.task_watchdog())

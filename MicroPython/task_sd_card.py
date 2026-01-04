@@ -15,6 +15,7 @@ import uasyncio as asyncio
 from machine import SDCard, Pin
 from os import mount, umount, listdir, stat, sync
 from queue import Queue
+import databatch
 import task_gps
 import task_watchdog
 
@@ -199,16 +200,13 @@ class Radar_SD_Card:
     #    * 2 - Wait for date and time to be available, then open data file
     #    * 3 - SD card present and open; save data when available
     #
+    #  @param data_batch A data batch holder that keeps sets of data to save
     #  @param skip_datetime_check For testing, don't wait for valid date/time
-    async def task_function(self, skip_datetime_check=False):
-
-        global valid_datetime                 # True if GPS fix recently made
-        
-        lines_before_sync = 0                 # Lines written before os.sync()
+    async def task_function(self, data_batch, skip_datetime_check=False):
 
         while True:
             # No matter the state, we must feed the watchdog task or be rebooted
-            task_watchdog.sd_card_task_flag = True
+#             task_watchdog.sd_card_task_flag = True
 
             if self.state == 0:               # Check if a card is present
                 try:
@@ -219,7 +217,7 @@ class Radar_SD_Card:
                 else:
                     print(f"Files in {SD_DIR}: {listdir(SD_DIR)}")
                     self.state = 1            # We've found a card
-                    await asyncio.sleep_ms(100)
+                    await asyncio.sleep_ms(10)
 
             elif self.state == 1:             # Card mounted; read config. file
                 try:
@@ -232,27 +230,21 @@ class Radar_SD_Card:
                     self.state = 2
                     await asyncio.sleep_ms(500)
 
-            elif self.state == 2:             # Check if date & time are known
-                if task_gps.valid_datetime or skip_datetime_check:
-                    self.state = 3            # state 3
+            elif self.state == 2:             # Write batches of data when ready
+                try:
+                    to_write = await data_batch.get()
                     await self.open_data_file()
-                    await asyncio.sleep_ms(100)
-                else:
-                    await asyncio.sleep_ms(200)
-
-            elif self.state == 3:             # Save data unless card removed
-                text_line = await sd_queue.get()
-                if text_line and self.data_file:
+                    self.data_file.write(to_write)
+                    self.close_data_file()
+                    data_batch.done()
+                except OSError as foops:
+                    print(f"Problem saving to data file: {foops}")
                     try:
-                        self.data_file.write(text_line)
-                        # Write buffered data periodically to SD card
-                        lines_before_sync += 1
-                        if lines_before_sync > SD_LINES_PER_SYNC:
-                            lines_before_sync = 0
-                            await self.reopen_data_file()
-                    except OSError as foops:
-                        print(f"Problem saving to data file: {foops}")
-                        self.state = 0           # Oops, card's gone or hosed
+                        umount(SD_DIR)
+                    except OSError:
+                        pass
+                    finally:
+                        self.state = 0          # Where we try to re-mount
                 await asyncio.sleep_ms(10)
 
 

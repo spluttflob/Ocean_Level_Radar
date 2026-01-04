@@ -50,12 +50,12 @@ class DataBatch:
         self._data.write(new_data)
         self._n_saved += 1
 
-        # If the batch is ready to use, unblock the consuming task(s)
+        # If the batch is ready to use, unblock the consuming task(s) and block
+        # this task from saving more data until the previous data has been read
         if self._n_saved >= self._size:
             self._waiting_for = self._consumers
             self._ok_to_save.clear()
             self._data_ready.set()
-            self._data_ready.clear()
 
         return self
 
@@ -67,9 +67,15 @@ class DataBatch:
         self._data.close()
         self._data = StringIO()
         self._n_saved = 0
-#         self._data_ready.clear()
         self._ok_to_save.set()
         gc.collect()
+
+
+    ## Check if a batch of data is ready. This allows get() to be used in a
+    #  non-blocking manner by only calling get() when data is ready.
+    #  @returns True if the batch of data is ready to be read, False if not
+    def ready(self):
+        return self._data_ready.is_set()
 
 
     ## Return a batch of data when it is ready, blocking the calling task until
@@ -78,6 +84,7 @@ class DataBatch:
     async def get(self):
         # Batch is not yet ready; suspend task until data batch is full
         await self._data_ready.wait()
+        self._data_ready.clear()
         return self._data.getvalue()
 
 
@@ -101,10 +108,6 @@ class DataBatch:
 if __name__ == "__main__":
 
     begin_ram = None
-
-    # Parameters: Number of data before sending batch, number of consumer tasks
-    batch = DataBatch(5, 2)
-
 
     # Function that creates some fake data
     async def task_data(a_batch):
@@ -142,12 +145,16 @@ if __name__ == "__main__":
         begin_ram = gc.mem_free()
         print(f"Begin: {begin_ram}")
 
+        # Params: Number of data before sending batch, number of consumer tasks
+        batch = DataBatch(5, 2)
+
         asyncio.create_task(task_data(batch))
         asyncio.create_task(task_show_A(batch))
         asyncio.create_task(task_show_B(batch))
 
         while True:
             await asyncio.sleep_ms(1_000)
+
 
     # Run the main function here. If we're doing a test, the program may be stopped
     # by pressing Ctrl-C. For normal measurements, just leave it running for days,
