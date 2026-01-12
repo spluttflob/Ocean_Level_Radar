@@ -12,7 +12,8 @@
 #  many minutes.
 #
 #  @author Spluttflob
-#  @date   2025-Nov-14 modified heavily from Boatsie GPS
+#  @date   2025-Nov-14 Modified heavily from Boatsie GPS
+#  @date   2026-Jan-11 Moved stuff from GPS callback to task function
 #  @copyright (c) 2025 by Spluttflob, released under the GPL V3
 
 import as_GPS
@@ -40,10 +41,9 @@ gps_power_pin = machine.Pin(GPS_POWER_PIN_NUM, machine.Pin.OUT, value=0)
 #  A typical GPS might be set up to deliver a fix every 5 seconds; do the math.
 GPS_FIXES_PER_RTC_UPDATE = 720
 
-## @brief   A counter used in gps_callback() to schedule clock updates.
-#  @details Initialize it so the RTCs are updated with GPS time as soon as a
-#           fix is available, then periodically thereafter.
-callback_counter = GPS_FIXES_PER_RTC_UPDATE
+## An event which triggers the update of the RTCs when the GPS has a good fix.
+gps_fix_ready = asyncio.Event()
+gps_fix_ready.clear()
 
 ## Global reference to the PCF8523 real-time clock, or None if we don't have
 #  one. It's set to None here and initialized to a useful value if a device is
@@ -61,47 +61,14 @@ valid_datetime = False
 #  @param agps The GPS driver which calls this callback
 #  @param *_ A list of other parameters, all of which are ignored
 def gps_callback(agps, *_):
-    global callback_counter, valid_datetime
+    global valid_datetime, gps_fix_ready
 
-    # Update the RTCs with (Y, M, D, h, m, s) once every GPS_..._UPDATE fixes
-    callback_counter += 1
-    if callback_counter >= GPS_FIXES_PER_RTC_UPDATE:
-
-        # The year must be greater than 2024, else something is amiss
-        day, mon, year = agps.date
-        if year > 24:
-            callback_counter = 0
-
-            year += 2000
-            hrs, mns, scs = agps.local_time
-
-            print(f"Updating RTC at {year}-{mon}-{day} {hrs}:{mns:02d}:{scs:02d}")
-            # Update the fancy PCF8523 RTC and the ESP32's built-in RTC
-            pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
-            esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
-
-            valid_datetime = True
-
-        # A year <2024 is bogus, so check again next time the callback runs
-        else:
-            callback_counter = GPS_FIXES_PER_RTC_UPDATE
-            valid_datetime = False
-
-
-## The UART (serial port) connected to the GPS module. We use non-standard
-#  pins on the 1.3 board; it's just what has worked out. Because of the
-#  annoying RS-232 naming pin convention, the ESP32's TXD (tx) pin connects
-#  to the GPS's RXD pin and vice versa. For some reason, we need to ensure
-#  that the pin connected to GPS TXD is a regular input, or something
-#  (maybe a pullup?) prevents good GPS signals on the RS-232 line.
-pin_rx = machine.Pin(GPS_TXD_PIN_NUM, machine.Pin.IN)
-uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0,
-                    tx=GPS_RXD_PIN_NUM, rx=GPS_TXD_PIN_NUM)
-pin_rx.init(machine.Pin.IN)
-
-## The one and only GPS module that a cheap ocean wave radar needs
-the_gps = as_GPS.AS_GPS(asyncio.StreamReader(uart),
-                        local_offset=LOCAL_OFFSET, fix_cb=gps_callback)
+    # Update the RTCs with (Y, M, D, h, m, s) once there's a good fix
+    # The year must be greater than 2024, else something is amiss
+    day, mon, year = agps.date
+    if year > 24:
+        valid_datetime = True
+        gps_fix_ready.set()
 
 
 ## Turn on the GPS module by setting the power control pin high. This
@@ -126,17 +93,33 @@ def gps_off():
 #  strings from it to make information available to other tasks. The task
 #  code doesn't do much because the action happens in callbacks in AS_GPS
 #  @param i2c The I2C bus which is used to talk to the PCF8523 real-time clock
-#  @param period_ms How often the task function runs
+#  @param period_ms How often the GPS is turned on to find time and place
 #  @param test_print Whether to print diagnostic data to the serial port
-async def gps_task(i2c, period_ms=5000, test_print=False):
+async def gps_task(i2c, period_ms=600_000, test_print=False):
 
     global pcf_rtc, esp_rtc, valid_datetime
+
+    ## The UART (serial port) connected to the GPS module. We use non-standard
+    #  pins on the 1.3 board; it's just what has worked out. Because of the
+    #  annoying RS-232 naming pin convention, the ESP32's TXD (tx) pin connects
+    #  to the GPS's RXD pin and vice versa. For some reason, we need to ensure
+    #  that the pin connected to GPS TXD is a regular input, or something
+    #  (maybe a pullup?) prevents good GPS signals on the RS-232 line.
+    pin_rx = machine.Pin(GPS_TXD_PIN_NUM, machine.Pin.IN)
+    uart = machine.UART(2, 9600, bits=8, parity=None, stop=1, flow=0,
+                        tx=GPS_RXD_PIN_NUM, rx=GPS_TXD_PIN_NUM)
+    pin_rx.init(machine.Pin.IN)
+
+    ## The stream reader which gets data from the UART connected to the GPS
+    the_reader = asyncio.StreamReader(uart)
+
+    ## The one and only GPS module that a cheap ocean wave radar needs
+    the_gps = as_GPS.AS_GPS(the_reader, local_offset=LOCAL_OFFSET,
+                            fix_cb=gps_callback)
 
     # Create an RTC driver if using the PCF8523
     if 0x68 in i2c.scan():
         pcf_rtc = pcf8523.PCF8523(i2c)
-
-    gps_on()
 
     # If a PCF8523 real-time clock is available, get time from it because
     # that chip should have a battery backup, unlike the RTC in the ESP32
@@ -147,6 +130,24 @@ async def gps_task(i2c, period_ms=5000, test_print=False):
         print(f"Set ESP32 RTC to {esp_rtc.datetime()} from PCF8523")
 
     while True:
+        
+        # Turn on the GPS, then wait until it has a few good fixes
+        gps_on()
+        await gps_fix_ready.wait()
+
+        year += 2000
+        hrs, mns, scs = agps.local_time
+
+        # Update the fancy PCF8523 RTC and the ESP32's built-in RTC
+        print(f"Updating RTCs at {year}-{mon}-{day} {hrs}:{mns:02d}:{scs:02d}")
+        esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
+        if pcf_rtc is not None:
+            pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
+        valid_datetime = True
+
+        gps_fix_ready.clear()
+        gps_off()
+
         if test_print:
             hrs, mns, scs = the_gps.local_time
             print(f"GPS {hrs}:{mns:02d}:{scs:02d}, ", end='')

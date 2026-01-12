@@ -33,6 +33,8 @@ ip_node = None
 #  @returns The network station, hopefully up and running
 async def web_up(net_station, ssid, password, access_point=False):
 
+    global ip_node
+
     gc.collect()
     print(f"Memory prior to WLAN: {gc.mem_free()}")
 
@@ -42,6 +44,9 @@ async def web_up(net_station, ssid, password, access_point=False):
             net_station = WLAN(AP_IF)
         else:
             net_station = WLAN(STA_IF)
+
+    gc.collect()
+    print(f"Memory after creating station: {gc.mem_free()}")
 
     if net_station.isconnected():
         print(f"Already connected as {net_station.ifconfig()[0]}")

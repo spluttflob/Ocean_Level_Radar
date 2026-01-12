@@ -17,23 +17,21 @@ import uasyncio as asyncio
 #  ready.
 class DataBatch:
 
-    ## Initialize a batch, giving it references to .......... something?
+    ## Initialize a batch, creating two string IO objects to store the data.
     #  @param batch_size The number of entries saved before printing or sending
     #  @param n_consumers The number of tasks using the data
     def __init__(self, batch_size, n_consumers):
 
-        self._data = StringIO()
+        self._data = [StringIO(), StringIO()]
         self._n_saved = 0              # The number of entries saved so far
         self._size = batch_size        # Number of entries before data is sent
         self._consumers = n_consumers  # How many consumer tasks use the data
 
+        self._writing = 0            # Which StringIO is being written, 0 or 1
+
         # This event tells consuming tasks that data is ready to be used
         self._data_ready = asyncio.Event()
         self._data_ready.clear()
-
-        # This event authorizes data saving tasks that more data may be saved
-        self._ok_to_save = asyncio.Event()
-        self._ok_to_save.set()
 
         # Number of consumers for which we're still waiting
         self._waiting_for = 0
@@ -44,31 +42,19 @@ class DataBatch:
     #  waits for data to be saved if necessary.
     #  TODO: Add double buffering so data may be taken as it's being saved
     #  @param new_data A string containing more data to be added to the batch
-    async def put(self, new_data):
-        await self._ok_to_save.wait()
-
-        self._data.write(new_data)
+    def put(self, new_data):
+        self._data[self._writing].write(new_data)
         self._n_saved += 1
 
-        # If the batch is ready to use, unblock the consuming task(s) and block
-        # this task from saving more data until the previous data has been read
+        # If the batch is ready to be read, switch the reading and writing 
+        # StreamIO objects and unblock the consuming task(s)
         if self._n_saved >= self._size:
             self._waiting_for = self._consumers
-            self._ok_to_save.clear()
+            self._writing ^= 1                        # Switch 1 to 0 or 0 to 1
+            self._n_saved = 0
             self._data_ready.set()
 
         return self
-
-
-    ## Clear the data, recovering its memory as soon as possible, and setting up
-    #  a new StringIO object to hold future data. This method should be called
-    #  by the last task which has used the data, if multiple tasks use the data.
-    def clear(self):
-        self._data.close()
-        self._data = StringIO()
-        self._n_saved = 0
-        self._ok_to_save.set()
-        gc.collect()
 
 
     ## Check if a batch of data is ready. This allows get() to be used in a
@@ -81,11 +67,12 @@ class DataBatch:
     ## Return a batch of data when it is ready, blocking the calling task until
     #  the batch has been filled with data.
     #  Usage: batch_o_data = await the_batch.get()
+    #  @returns One whole batch of saved data as a string
     async def get(self):
         # Batch is not yet ready; suspend task until data batch is full
         await self._data_ready.wait()
         self._data_ready.clear()
-        return self._data.getvalue()
+        return self._data[self._writing ^ 1].getvalue()
 
 
     ## Each consumer task calls this when finished consuming. When all the
@@ -93,14 +80,16 @@ class DataBatch:
     def done(self):
         self._waiting_for -= 1
         if self._waiting_for <= 0:
-            self.clear()
+            self._data[self._writing ^ 1].close()
+            self._data[self._writing ^ 1] = StringIO()
+            gc.collect()
 
 
     ## Return the data batch as a string to be stored, printed, sent over the
     #  web, or otherwise used. This method is only for debugging and is not to
     #  be used in a task.
     def __str__(self):
-        return self._data.getvalue()
+        return self._data[self._writing ^ 1].getvalue()
 
 
 #-------------------------------------------------------------------------------
@@ -116,7 +105,7 @@ if __name__ == "__main__":
         while True:
             data = f"Data {count}, "
             count += 1
-            await a_batch.put(data)
+            a_batch.put(data)
             del data
             await asyncio.sleep_ms(1_000)
 

@@ -224,7 +224,7 @@ async def file_server_task():
     # Small delay before MQTT so Wi-Fi and TCP settle
     await asyncio.sleep_ms(2_000)
     gc.collect()
-    task_mqtt.web_start_done = True
+#     task_mqtt.web_start_done = True
     print("Memory after file server start:", gc.mem_free())
 #     addr = server.sockets[0].getsockname()
 #     print("HTTP file server listening on {}:{}".format(addr[0], addr[1]))

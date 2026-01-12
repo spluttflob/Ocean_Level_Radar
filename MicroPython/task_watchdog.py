@@ -70,18 +70,14 @@ async def task_watchdog():
         if ticks_diff(ticks_ms(), last_check_time) >= TASK_CHECK_MS:
             last_check_time = ticks_ms()
 
-            if not radar_task_flag # or not sd_card_task_flag:
-                if not radar_task_flag:
-                    print("Oh noes! Radar task stopped; we'll reboot.")
-#                 if not sd_card_task_flag:
-#                     print("Bummer! SD card task stopped; we'll reboot.")
+            if not radar_task_flag:
+                print("Oh noes! Radar task stopped; we'll reboot.")
                 await asyncio.sleep_ms(1_000)
                 reset()
             else:
                 print(f"Watchdog check passed, {gc.mem_free()}B free.")
 
             radar_task_flag = False
-#             sd_card_task_flag = False
 
         # Run often enough to definitely keep the doggo fed if there's no crash
         await asyncio.sleep_ms(1_000)

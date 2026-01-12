@@ -21,16 +21,16 @@
 
 import gc
 import utime
-import machine
+from machine import Pin, I2C  # Also ADC if measuring battery voltage
 import periodic
 from micropython import const # Constants use a little less memory
 import uasyncio as asyncio    # Cooperative multitasking, Python style
 import databatch              # Store batches of data to be saved and/or sent
-import as_GPS                 # Asyncio driver for GPS parsing
 import pcf8523                # Real-time clock on the Adalogger
 import task_sd_card           # For storing data on the Adalogger
 import task_gps               # Reads NMEA strings from a generic GPS module
 import as_xm125_distance      # The radar module
+# import task_network           # Keeps a network connection up if needed
 import task_mqtt              # If messages are sent through Web in real time
 import task_watchdog          # Monitors system and reboots if malfunctioning
 import task_web               # Makes data files available on web pages
@@ -52,27 +52,27 @@ GPS_FIX_PER_SAVE = const(60)
 #  instead giving it a larger message less frequently.
 POINTS_PER_DATA_BATCH = const(60)
 
-## How many MQTT messages between MQTT "hello" messages that say what this data
+## How many data batches between MQTT "hello" messages that say what this data
 #  is about. We may use public MQTT brokers, so anyone might read the data
-MQTT_MSGS_PER_HELLO = 12
+BATCHES_PER_HELLO = 12
 
 ## A message sent infrequently to the MQTT broker explaining to the public what
 #  this data is
-MQTT_HELLO_MESSAGE = "# Public tide data (c) Spluttflob, CC-BY-NC-SA 3.0"
+HELLO_MESSAGE = "# Public tide data (c) Spluttflob, CC-BY-NC-SA 3.0"
 
 ## The number of the pin used to wake up the radar and put it to sleep
 RADAR_WAKE_PIN_NUM = const(27)
 
-## The number of the pin used to activate the EZSBC battery voltage divider, or
-#  0 if using another board such as Adafruit's that doesn't have this feature.
-batt_v_ctl_pin = machine.Pin(2, machine.Pin.OUT, value=0)
+# ## The number of the pin used to activate the EZSBC battery voltage divider, or
+# #  0 if using another board such as Adafruit's that doesn't have this feature.
+# batt_v_ctl_pin = Pin(2, Pin.OUT, value=0)
 
-## The number of the pin used to measure the battery voltage. It's set up with
-#  the maximum attenuation so we can read high enough voltages.
-batt_v_sensor = machine.ADC(machine.Pin(35), atten=machine.ADC.ATTN_11DB)
+# ## The number of the pin used to measure the battery voltage. It's set up with
+# #  the maximum attenuation so we can read high enough voltages.
+# batt_v_sensor = ADC(Pin(35), atten=ADC.ATTN_11DB)
 
 ## The I2C bus object used to talk to the radar sensor and PCF8523 RTC
-i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
+i2c = I2C(0, scl=Pin(22), sda=Pin(23))
 print(f"I2C devices:", ",".join(f"0x{item:x}" for item in i2c.scan()))
 
 
@@ -81,9 +81,9 @@ print(f"I2C devices:", ",".join(f"0x{item:x}" for item in i2c.scan()))
 #           the SD card task to provide the radar configuration (range, etc.)
 #           and save the data. If MQTT is enabled, data will be collected into
 #           messages to be sent to an MQTT broker.
-#  @param   data_per_mqtt_msg The number of readings per MQTT message sent, or
-#           None if we're not using MQTT at all
-async def task_radar(data_per_mqtt_msg):
+#  @param   data_batch A data collection object which saves sets of readings to
+#           be written to the SD card or sent via MQTT
+async def task_radar(data_batch):
 
     # Set up a periodic scheduler object which minimizes clock drift
     perd = periodic.PeriodicDelay(period_ms=MS_PER_DATA_POINT)
@@ -95,9 +95,9 @@ async def task_radar(data_per_mqtt_msg):
     # Try until we get valid parameters from the configuration dictionary
     while True:
         try:
-            begin_dist_m = task_sd_card.the_SD_card.config["Beginning Distance"]
-            end_dist_m = task_sd_card.the_SD_card.config["Ending Distance"]
-            sensitivity = int(task_sd_card.the_SD_card.config["Sensitivity"])
+            begin_dist_m = task_sd_card.the_configuration["Beginning Distance"]
+            end_dist_m = task_sd_card.the_configuration["Ending Distance"]
+            sensitivity = int(task_sd_card.the_configuration["Sensitivity"])
         except KeyError:
             print("Waiting for radar configuration")
             await asyncio.sleep_ms(5_000)
@@ -115,10 +115,8 @@ async def task_radar(data_per_mqtt_msg):
     print(f"Protocol status {radar.protocol_status():08x}", end='  ')
     print(f"Detector status {radar.detector_status():08x}")
 
-    last_fix_count = GPS_FIX_PER_SAVE
-    mqtt_string = ""
-    mqtt_count = 0
-    mqtt_hello_count = MQTT_MSGS_PER_HELLO
+    last_fix_count = GPS_FIX_PER_SAVE // 4
+    hello_count = BATCHES_PER_HELLO
 
     while True:
         # Take measurement first; it might take some time
@@ -128,37 +126,18 @@ async def task_radar(data_per_mqtt_msg):
         now = utime.localtime()
         now_str = f"D{now[0]:04d}-{now[1]:02d}-{now[2]:02d}T{now[3]:02d}:{now[4]:02d}:{now[5]:02d}"
 
-        a_line = ";".join((now_str, prt_str)) + "\r\n"
-        print(a_line, end='')
+        a_line = ";".join((now_str, prt_str))
+        del now_str, prt_str
+        print(a_line, gc.mem_free(), sep=';')
+        a_line += "\r\n"
 
-        # Save to SD card the time and measurement using put_nowait() in case
-        # something has gone wrong with the SD card -- we don't want to block
-        # taking data (and sending it via MQTT if enabled) if the SD card has
-        # a problem
-        if task_sd_card.sd_queue.full():
-            print("Problem: SD Card queue full")
-        else:
-            await task_sd_card.sd_queue.put(a_line)
-
-#         try:
-#             await task_sd_card.sd_queue.put_nowait(a_line + "\r\n")
-#         except queue.QueueFull as qoops:
-#             print(f"Problem sending to SD card queue: {qoops}")
-
-        # If using MQTT for real-time cloud storage, assemble a larger string
-        # with a number of readings to be sent as one MQTT message
-        if data_per_mqtt_msg is not None:
-            mqtt_string += a_line
-            mqtt_count += 1
-            if mqtt_count >= data_per_mqtt_msg:
-                mqtt_count = 0
-                await task_mqtt.mqtt_queue.put(mqtt_string)
-                mqtt_string = ""
-                # Occasionally send a hello message to public MQTT broker
-                mqtt_hello_count += 1
-                if mqtt_hello_count > MQTT_MSGS_PER_HELLO:
-                    mqtt_hello_count = 0
-                    await task_mqtt.mqtt_queue.put(MQTT_HELLO_MESSAGE)
+        # Send the line of data to the data batch, which will pass batches of
+        # data to the tasks that store and/or send the data
+        data_batch.put(a_line)
+        del a_line
+        if hello_count > BATCHES_PER_HELLO:
+            hello_count = 0
+            data_batch.put(HELLO_MESSAGE)
 
         # If it's time to save a line of GPS data, do so and reset counter
         if task_gps.valid_datetime:
@@ -171,14 +150,16 @@ async def task_radar(data_per_mqtt_msg):
                 lat = task_gps.the_gps.latitude()
                 lon = task_gps.the_gps.longitude()
                 alt = task_gps.the_gps.altitude
-                fix_it = f"G{year}-{mon}-{day},{hrs:02d}:{mns:02d}:{scs:02d},{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt},{task_mqtt.ip_node}"
-                await task_sd_card.sd_queue.put(fix_it + "\r\n")
-                await task_mqtt.mqtt_queue.put(fix_it)
+                node = task_mqtt.ip_node
+                fix_it = f"G{year}-{mon}-{day},{hrs:02d}:{mns:02d}:{scs:02d},{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt},{node}"
+                data_batch.put(fix_it + "\r\n")
+                del fix_it
 
         # We're having memory allocation errors on classic ESP32 sometimes. Try
         # to keep memory well managed to prevent such errors
         gc.collect()
 
+        # Keep the watchdog task happy so it doesn't reboot the processor
         task_watchdog.radar_task_flag = True
 
         # Wait the correct duration so this task runs at the next sampling time
@@ -195,25 +176,27 @@ async def main():
     # Create an object to store data in batches, then send batches to SD card,
     # MQTT, and other task(s) that save or send data. Parameters are number of
     # data per batch and number of tasks that use the data
-    batch = databatch.DataBatch(POINTS_PER_DATA_BATCH, 2)
+    batch = databatch.DataBatch(POINTS_PER_DATA_BATCH, 1)
 
-    # MQTT and web tasks are only used if the device will be on a LAN reporting
-    # data in real time; if on solar at a remote site, comment out these tasks
-    # Create MQTT task first and wait for the network to get going
-    asyncio.create_task(task_mqtt.mqtt_task(batch))
-    while not task_mqtt.net_station or not task_mqtt.net_station.isconnected():
-        await asyncio.sleep_ms(10)
+    gc.collect()
+    print(f"After batch RAM free: {gc.mem_free()}")
 
-    asyncio.create_task(task_mqtt.check_WiFi_task())
-#     asyncio.create_task(task_web.file_server_task())
+    # This task is only used if the device will be on a LAN reporting data in
+    # real time; if on solar at a remote site, comment out this task and set the
+    # second parameter of DataBatch constructor above to 1 (SD card task only)
+#     asyncio.create_task(task_mqtt.mqtt_task(batch))
 
     # Wait for the WiFi using tasks to get stable before running other tasks. 
     await asyncio.sleep_ms(2_000)
 
-    asyncio.create_task(task_sd_card.the_SD_card.task_function(batch))
-    asyncio.create_task(task_gps.gps_task(i2c))
-    asyncio.create_task(task_radar(POINTS_PER_MQTT_MESSAGE))
-    asyncio.create_task(task_watchdog.task_watchdog())
+    asyncio.create_task(task_sd_card.task_SD_Card(batch))
+#     asyncio.create_task(task_gps.gps_task(i2c))
+    asyncio.create_task(task_radar(batch))
+#     asyncio.create_task(task_watchdog.task_watchdog())
+
+#     await asyncio.sleep_ms(2_000)
+#     asyncio.create_task(task_network.check_WiFi_task()) # Not used if MQTT is
+#     asyncio.create_task(task_web.file_server_task())    # Won't work with MQTT
 
     while True:
         await asyncio.sleep_ms(1_000)
@@ -229,9 +212,8 @@ try:
 except KeyboardInterrupt:
     print("Ctrl-C. ", end='')
 except Exception as ohnoes:
-    print(f"Uncaught exception {ohnoes}")
+    print(f"Uncaught exception: {ohnoes}")
     utime.sleep_ms(500)
 finally:
-    task_sd_card.the_SD_card.close_data_file()
     asyncio.new_event_loop()
     print("Water level measurement test finished.")
