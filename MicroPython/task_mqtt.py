@@ -27,7 +27,7 @@ MQTT_TOPIC = b"bogan_radar/"
 #  configuration file on the SD card, if there is one.
 mqtt_site = b"test0"
 
-## The MQTT server ("broker") to which messages are sent
+## The MQTT server ("broker") to which messages are sent "test.mosquitto.org"
 MQTT_SERVER = "192.168.2.87"
 
 ## The port on the MQTT server to be used
@@ -36,6 +36,9 @@ MQTT_PORT = 1883
 ## The lat number in the IP address of this machine on the LAN to which it is
 #  hopefully connected
 ip_node = 0
+
+## The number of times the network or MQTT broker has gone down
+outages = 0
 
 
 ## Get the LAN's SSID and password from where they're stored in ESP32 NVS
@@ -50,14 +53,20 @@ def get_LAN_certs(namespace):
     return ssid, passy
 
 
-## Connection handler? Something like that. Seems not to be used.
-async def conn_han(client):
-    await client.subscribe('foo_topic', 1)
+async def down(client):
+    global outages
+    while True:
+        await client.down.wait()             # Pause until connectivity changes
+        client.down.clear()
+        outages += 1
+        print("WiFi or MQTT broker is down")
 
 
-## MQTT callback, not used (I think).
-def callback(topic, msg, retained):
-    print(f"MQTT CB:", topic, msg, retained)
+async def up(client):
+    while True:
+        await client.up.wait()
+        client.up.clear()
+        print("Connected to MQTT broker")
 
 
 ## Task that sends MQTT messages about radar distance measurements.
@@ -69,7 +78,8 @@ async def mqtt_task(data_batch):
 
     global ip_node          # Last number in IP address, global for other tasks
 
-    print("Starting mqtt_task()")
+    gc.collect()
+    print(f"Starting mqtt_task() with {gc.mem_free()} B free")
 
     # Get the LAN certifications from the ESP32's nonvolatile memory
     ssid, passwd = get_LAN_certs(CERTS_NAMESPACE)
@@ -77,15 +87,28 @@ async def mqtt_task(data_batch):
     # Set up the MQTT client object
     config["ssid"] = ssid
     config["wifi_pw"] = passwd
-    config["subs_cb"] = callback
-    config["connect_coro"] = conn_han
+#     config["subs_cb"] = callback
+#     config["connect_coro"] = conn_han
     config["server"] = MQTT_SERVER
     config["port"] = MQTT_PORT
-    MQTTClient.DEBUG = True              # Optional: print diagnostic messages
+    config["will"] = (MQTT_TOPIC + mqtt_site,
+                      f"MQTT client at {mqtt_site.decode()} quitting", False, 0)
+    config["keepalive"] = 120
+    config["queue_len"] = 1            # Use event interface with default queue
+    MQTTClient.DEBUG = True            # Optional: print diagnostic messages
     mqtt_client = MQTTClient(config)
 
-    # Connect to the LAN, then to the MQTT server
-    await mqtt_client.connect()
+    # Connect to the MQTT server
+    try:
+        await mqtt_client.connect(quick=True)
+    except OSError as rats:
+        print(f"MQTT Connection failed: {rats}")
+        while True:
+            asyncio.sleep_ms(1_000)
+
+    # Start tasks that respond to network connection being lost and regained
+    asyncio.create_task(up(mqtt_client))
+    asyncio.create_task(down(mqtt_client))
 
     # Find the IP address and isolate the last number for sharing
     my_ip_addr = mqtt_client._sta_if.ifconfig()[0]
@@ -118,7 +141,7 @@ if __name__ == "__main__":
         count = 0
         while True:
             count += 1
-            d_batch.put(f"Count: {count} ")
+            d_batch.put(f"#{count} RAM: {gc.mem_free()} ")
             await asyncio.sleep_ms(1000)
 
 

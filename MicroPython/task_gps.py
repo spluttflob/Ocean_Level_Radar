@@ -37,18 +37,13 @@ GPS_POWER_PIN_NUM = const(15)
 ## A pin object for the GPS power pin
 gps_power_pin = machine.Pin(GPS_POWER_PIN_NUM, machine.Pin.OUT, value=0)
 
-## The number of GPS fixes before the real-time clock is updated with GPS time.
-#  A typical GPS might be set up to deliver a fix every 5 seconds; do the math.
-GPS_FIXES_PER_RTC_UPDATE = 720
+# ## The number of GPS fixes before the real-time clock is updated with GPS time.
+# #  A typical GPS might be set up to deliver a fix every 5 seconds; do the math.
+# GPS_FIXES_PER_RTC_UPDATE = 720
 
 ## An event which triggers the update of the RTCs when the GPS has a good fix.
 gps_fix_ready = asyncio.Event()
 gps_fix_ready.clear()
-
-## Global reference to the PCF8523 real-time clock, or None if we don't have
-#  one. It's set to None here and initialized to a useful value if a device is
-#  found at the correct address on the I2C bus.
-pcf_rtc = None
 
 ## Global reference to the ESP32 RTC, which other tasks will need to use
 esp_rtc = machine.RTC()
@@ -97,7 +92,7 @@ def gps_off():
 #  @param test_print Whether to print diagnostic data to the serial port
 async def gps_task(i2c, period_ms=600_000, test_print=False):
 
-    global pcf_rtc, esp_rtc, valid_datetime
+    global gps_fix_ready, valid_datetime
 
     ## The UART (serial port) connected to the GPS module. We use non-standard
     #  pins on the 1.3 board; it's just what has worked out. Because of the
@@ -117,26 +112,26 @@ async def gps_task(i2c, period_ms=600_000, test_print=False):
     the_gps = as_GPS.AS_GPS(the_reader, local_offset=LOCAL_OFFSET,
                             fix_cb=gps_callback)
 
-    # Create an RTC driver if using the PCF8523
+    # Create an RTC driver if a PCF8523 seems to be on the I2C bus and copy the
+    # time from the PCF8523 to the ESP32 RTC, because the PCF8523 has a battery
     if 0x68 in i2c.scan():
         pcf_rtc = pcf8523.PCF8523(i2c)
-
-    # If a PCF8523 real-time clock is available, get time from it because
-    # that chip should have a battery backup, unlike the RTC in the ESP32
-    if pcf_rtc is not None:
         year, mon, day, hrs, mns, scs = pcf_rtc.datetime
         esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
         valid_datetime = True
         print(f"Set ESP32 RTC to {esp_rtc.datetime()} from PCF8523")
+    else:
+        pcf_rtc = None
 
     while True:
-        
-        # Turn on the GPS, then wait until it has a few good fixes
+        # Turn on the GPS, then wait until it has a good fix
         gps_on()
+
         await gps_fix_ready.wait()
 
+        day, mon, year = the_gps.date
+        hrs, mns, scs = the_gps.local_time
         year += 2000
-        hrs, mns, scs = agps.local_time
 
         # Update the fancy PCF8523 RTC and the ESP32's built-in RTC
         print(f"Updating RTCs at {year}-{mon}-{day} {hrs}:{mns:02d}:{scs:02d}")
@@ -145,8 +140,10 @@ async def gps_task(i2c, period_ms=600_000, test_print=False):
             pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
         valid_datetime = True
 
+        # Turn off the GPS; we'll turn it on to get the next fix
         gps_fix_ready.clear()
         gps_off()
+        the_reader.close()
 
         if test_print:
             hrs, mns, scs = the_gps.local_time
@@ -177,9 +174,9 @@ if __name__ == "__main__":
                     print("*", end='')
 
 
-    ## Choose one of the two task functions, echo to see if the GPS module is
-    #  sending any data or the real GPS task which can print information from
-    #  the parser which makes sense of what the GPS module is reporting.
+    # Choose one of the two task functions, echo to see if the GPS module is
+    # sending any data or the real GPS task which can print information from
+    # the parser which makes sense of what the GPS module is reporting.
     async def main():
 #         asyncio.create_task(echo_task())
         asyncio.create_task(gps_task(i2c, period_ms=10_000, test_print=True))
@@ -190,7 +187,6 @@ if __name__ == "__main__":
     print("Beginning GPS parser test.")
     try:
         asyncio.run(main())
-
     except KeyboardInterrupt:
         print("Ctrl-C. ", end='')
 

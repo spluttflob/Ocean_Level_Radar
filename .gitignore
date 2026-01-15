@@ -2,6 +2,7 @@
 *.FCBak
 hardware/horn_antenna_0.FCStd
 
+MicroPython/unused/
 MicroPython/ajax0.py
 MicroPython/ble0.py
 MicroPython/daylight.py

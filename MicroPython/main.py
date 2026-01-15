@@ -117,10 +117,13 @@ async def task_radar(data_batch):
 
     last_fix_count = GPS_FIX_PER_SAVE // 4
     hello_count = BATCHES_PER_HELLO
+    test_count = 0                                       #############################
 
     while True:
         # Take measurement first; it might take some time
         prt_str = await radar.measure_to_sacsv()
+#         prt_str = ", ".join([f"test {x + test_count}" for x in range(8)])
+        test_count += 8
 
         # Immediately after measurement, record time from real-time clock
         now = utime.localtime()
@@ -139,21 +142,21 @@ async def task_radar(data_batch):
             hello_count = 0
             data_batch.put(HELLO_MESSAGE)
 
-        # If it's time to save a line of GPS data, do so and reset counter
-        if task_gps.valid_datetime:
-            last_fix_count += 1
-            if last_fix_count > GPS_FIX_PER_SAVE:
-                last_fix_count = 0
-                day, mon, year = task_gps.the_gps.date
-                year += 2000
-                hrs, mns, scs = task_gps.the_gps.local_time
-                lat = task_gps.the_gps.latitude()
-                lon = task_gps.the_gps.longitude()
-                alt = task_gps.the_gps.altitude
-                node = task_mqtt.ip_node
-                fix_it = f"G{year}-{mon}-{day},{hrs:02d}:{mns:02d}:{scs:02d},{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt},{node}"
-                data_batch.put(fix_it + "\r\n")
-                del fix_it
+#         # If it's time to save a line of GPS data, do so and reset counter
+#         if task_gps.valid_datetime:
+#             last_fix_count += 1
+#             if last_fix_count > GPS_FIX_PER_SAVE:
+#                 last_fix_count = 0
+#                 day, mon, year = task_gps.the_gps.date
+#                 year += 2000
+#                 hrs, mns, scs = task_gps.the_gps.local_time
+#                 lat = task_gps.the_gps.latitude()
+#                 lon = task_gps.the_gps.longitude()
+#                 alt = task_gps.the_gps.altitude
+#                 node = task_mqtt.ip_node
+#                 fix_it = f"G{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt},{node}"
+#                 data_batch.put(fix_it + "\r\n")
+#                 del fix_it
 
         # We're having memory allocation errors on classic ESP32 sometimes. Try
         # to keep memory well managed to prevent such errors
@@ -176,7 +179,8 @@ async def main():
     # Create an object to store data in batches, then send batches to SD card,
     # MQTT, and other task(s) that save or send data. Parameters are number of
     # data per batch and number of tasks that use the data
-    batch = databatch.DataBatch(POINTS_PER_DATA_BATCH, 1)
+    batch = databatch.DataBatch(batch_size=POINTS_PER_DATA_BATCH,
+                                n_consumers=2)
 
     gc.collect()
     print(f"After batch RAM free: {gc.mem_free()}")
@@ -184,15 +188,18 @@ async def main():
     # This task is only used if the device will be on a LAN reporting data in
     # real time; if on solar at a remote site, comment out this task and set the
     # second parameter of DataBatch constructor above to 1 (SD card task only)
-#     asyncio.create_task(task_mqtt.mqtt_task(batch))
+    asyncio.create_task(task_mqtt.mqtt_task(batch))
 
-    # Wait for the WiFi using tasks to get stable before running other tasks. 
-    await asyncio.sleep_ms(2_000)
+    # Wait for the previous tasks to get stable before running other tasks. 
+    await asyncio.sleep_ms(5_000)
+
+    gc.collect()
+    print(f"After MQTT RAM free: {gc.mem_free()}")
 
     asyncio.create_task(task_sd_card.task_SD_Card(batch))
-#     asyncio.create_task(task_gps.gps_task(i2c))
+    asyncio.create_task(task_gps.gps_task(i2c))
     asyncio.create_task(task_radar(batch))
-#     asyncio.create_task(task_watchdog.task_watchdog())
+    asyncio.create_task(task_watchdog.task_watchdog())
 
 #     await asyncio.sleep_ms(2_000)
 #     asyncio.create_task(task_network.check_WiFi_task()) # Not used if MQTT is
