@@ -16,8 +16,8 @@ import uasyncio as asyncio
 from machine import SDCard, Pin
 from os import mount, umount, listdir, stat, sync
 from gc import mem_free
-# from queue import Queue
-import databatch
+import queue
+# import databatch
 # import task_gps                        # So we can ask it for date and time
 
 
@@ -147,8 +147,9 @@ async def file_name_from_date():
 #    * 1 - SD card detected; open it and read configuration file
 #    * 2 - SD card present and open; save data when available
 #
-#  @param data_batch A data batch holder that keeps sets of data to save
-async def task_SD_Card(data_batch):
+#  @param in_queue A queue that keeps sets of data (strings) to be saved
+#  @param out_queue A queue for sending the data to another task, if any
+async def task_SD_Card(in_queue, out_queue=None):
 
     state = 0
 
@@ -191,7 +192,7 @@ async def task_SD_Card(data_batch):
         # SD card so the next data batch can be saved. 
         elif state == 2:
             try:
-                to_write = await data_batch.get()
+                to_write = await in_queue.get()
                 with open(data_file_name, 'a') as da_file:
                     da_file.write(to_write)
             except OSError as foops:
@@ -203,29 +204,33 @@ async def task_SD_Card(data_batch):
                 finally:
                     state = 0               # Where we try to re-mount
             finally:
-                data_batch.done()           # Always let radar take new data
+                if out_queue is not None:
+                    try:
+                        out_queue.put_nowait(to_write)
+                    except queue.QueueFull:
+                        print("Next queue full")
+                else:
+                    del to_write
 
             await asyncio.sleep_ms(50)
 
 
 # --------------------------------- Test Code ----------------------------------
 #
-# NOT WORKING RIGHT NOW: Needs to be updated to use the data batch, not a queue
+# NOT WORKING RIGHT NOW: Needs to be updated to use the most recent queue stuff
 
 if __name__ == "__main__":
 
     import utime
 
-    print(f"Task SD Card Test, asyncio {'.'.join(map(str, asyncio.__version__))}")
+    the_queue = queue.Queue(maxsize=3)
 
-    # The object holding data to be written in double-buffered streams.
-    # Parameters are points per data batch and number of tasks using the data
-    data_batch = databatch.DataBatch(50, 1)
+    print(f"Task SD Card Test, asyncio {'.'.join(map(str, asyncio.__version__))}")
 
     # Simulate a task sending data to be recorded; just use time from the RTC.
     # We're going to beat the heck out of the SD card to see if we can reproduce
     # errors that have been causing the wave radar to stop working
-    async def sim_data_task(batch):
+    async def sim_data_task(a_queue):
         count = 0
         while True:
             now = utime.localtime()
@@ -233,14 +238,14 @@ if __name__ == "__main__":
             count += 1
             if count % 25 == 0:
                 print(now_str, end='')
-            batch.put(now_str)
+            a_queue.put(now_str)
             await asyncio.sleep_ms(200)
 
 
     # Run the task function as a test.
     async def main():
-        asyncio.create_task(task_SD_Card(data_batch))
-        asyncio.create_task(sim_data_task(data_batch))
+        asyncio.create_task(task_SD_Card(the_queue))
+        asyncio.create_task(sim_data_task(the_queue))
 
         while True:
             await asyncio.sleep_ms(1_000)

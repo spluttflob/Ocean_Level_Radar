@@ -176,14 +176,16 @@ async def task_radar(data_batch):
 async def main():
     global i2c
 
-    # Create an object to store data in batches, then send batches to SD card,
-    # MQTT, and other task(s) that save or send data. Parameters are number of
-    # data per batch and number of tasks that use the data
-    batch = databatch.DataBatch(batch_size=POINTS_PER_DATA_BATCH,
-                                n_consumers=2)
+#     # Create an object to store data in batches, then send batches to SD card,
+#     # MQTT, and other task(s) that save or send data. Parameters are number of
+#     # data per batch and number of tasks that use the data
+#     batch = databatch.DataBatch(batch_size=POINTS_PER_DATA_BATCH,
+#                                 n_consumers=2)
+# 
+#     gc.collect()
+#     print(f"After batch RAM free: {gc.mem_free()}")
 
-    gc.collect()
-    print(f"After batch RAM free: {gc.mem_free()}")
+    the_queue = queue.Queue(maxsize=10)
 
     # This task is only used if the device will be on a LAN reporting data in
     # real time; if on solar at a remote site, comment out this task and set the
@@ -196,17 +198,23 @@ async def main():
     gc.collect()
     print(f"After MQTT RAM free: {gc.mem_free()}")
 
-    asyncio.create_task(task_sd_card.task_SD_Card(batch))
-    asyncio.create_task(task_gps.gps_task(i2c))
-    asyncio.create_task(task_radar(batch))
-    asyncio.create_task(task_watchdog.task_watchdog())
+    tasks = []
+    tasks.append(asyncio.create_task(task_sd_card.task_SD_Card(batch)))
+    tasks.append(asyncio.create_task(task_gps.gps_task(i2c)))
+    tasks.append(asyncio.create_task(task_radar(batch)))
+    tasks.append(asyncio.create_task(task_watchdog.task_watchdog()))
 
 #     await asyncio.sleep_ms(2_000)
 #     asyncio.create_task(task_network.check_WiFi_task()) # Not used if MQTT is
 #     asyncio.create_task(task_web.file_server_task())    # Won't work with MQTT
 
-    while True:
-        await asyncio.sleep_ms(1_000)
+    # Using asyncio.gather() allows us to catch and deal with exceptions in
+    # each task; otherwise one task may quit while others just keep going
+    try:
+        await asyncio.gather(*tasks)
+    except MemoryError as oops:
+        print(f"FAIL: {oops}")
+        machine.reset()
 
 
 # Run the main function here. If we're doing a test, the program may be stopped

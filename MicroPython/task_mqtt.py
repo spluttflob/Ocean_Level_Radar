@@ -9,9 +9,11 @@
 #  @copyright (c) 2025 by Spluttflob, released under the GPL V3
 
 import gc
+import machine
 from esp32 import NVS
 from utime import ticks_ms, ticks_diff
 import uasyncio as asyncio
+import queue
 from mqtt_as import MQTTClient, config
 
 
@@ -37,8 +39,11 @@ MQTT_PORT = 1883
 #  hopefully connected
 ip_node = 0
 
-## The number of times the network or MQTT broker has gone down
-outages = 0
+## Whether the network is connected and working (True) or not (False)
+net_up = False
+
+## The number of times transmission tried with the network or MQTT broker down
+outage_count = 0
 
 
 ## Get the LAN's SSID and password from where they're stored in ESP32 NVS
@@ -53,19 +58,21 @@ def get_LAN_certs(namespace):
     return ssid, passy
 
 
+## Task which waits until the network is down, then sets a flag and complains
 async def down(client):
-    global outages
     while True:
         await client.down.wait()             # Pause until connectivity changes
         client.down.clear()
-        outages += 1
+        net_up = False
         print("WiFi or MQTT broker is down")
 
 
+## Task which waits until the network is up, then sets a flag and celebrates
 async def up(client):
     while True:
         await client.up.wait()
         client.up.clear()
+        net_up = True
         print("Connected to MQTT broker")
 
 
@@ -73,8 +80,10 @@ async def up(client):
 #  The messages are delivered in queue mqtt_queue; messages are kept in the
 #  queue until a specified number have arrived, at which time the messages are
 #  published to the subscribed MQTT broker.
-#  @param data_batch A data batch holder that keeps sets of data to be sent
-async def mqtt_task(data_batch):
+#  @param a_queue A queue that gives this task strings of data to be sent
+#  @param next_queue A queue that sends the data to another task, or None if
+#         the data should be deleted when it has been sent
+async def mqtt_task(a_queue, next_queue=None):
 
     global ip_node          # Last number in IP address, global for other tasks
 
@@ -125,35 +134,73 @@ async def mqtt_task(data_batch):
     print(f"Publishing to MQTT topic {full_mqtt_topic}")
 
     while True:
-        message = await data_batch.get()
+        message = await a_queue.get()
         start_time = ticks_ms()
         await mqtt_client.publish(full_mqtt_topic, message.encode(), qos=1)
-        data_batch.done()
         print(f"MQTT pub in {ticks_diff(ticks_ms(), start_time)} ms")
+        if next_queue is not None:
+            try:
+                next_queue.put_nowait(message)
+            except queue.QueueFull:
+                print("Next queue full")
+        else:
+            del message
 
 
 if __name__ == "__main__":
 
-    import databatch
-
-    ## Create some data (just counting numbers) and put it in the queue
-    async def test_data_task(d_batch):
+    ## Create some data (just counting numbers and text) and put it in the queue
+    async def test_data_task(a_queue):
         count = 0
+        send_str = ""
         while True:
+            try:
+                send_str += f"#{count} {gc.mem_free()} bytes free random access memory. "
+            except MemoryError as i_forgot:
+                print(f"Problem: {i_forgot}")
             count += 1
-            d_batch.put(f"#{count} RAM: {gc.mem_free()} ")
+            if count % 10 == 0:
+                try:
+                    a_queue.put_nowait(send_str)
+                except queue.QueueFull:
+                    print(f"Queue full: {len(send_str)} bytes")
+                print("--> ", end='')
+                send_str = ""
             await asyncio.sleep_ms(1000)
+
+
+    ## Another task which prints periodically to verify that the MQTT task
+    #  hasn't blocked all tasks from running.  Hopefully.
+    async def other_task():
+        count = 0
+        blatt = ""
+        while True:
+            blatt += "blatterfs " * 200
+            print(f"Other task: {count} RAM: {gc.mem_free()}.  ")
+            count += 1
+            await asyncio.sleep_ms(2_000)
 
 
     ## Get the task functions running, then twiddle thumbs until Control-C'ed.
     async def main():
-        batch = databatch.DataBatch(batch_size=5, n_consumers=1)
-#         asyncio.create_task(task_network.check_WiFi_task())
-        asyncio.create_task(mqtt_task(batch))
-        asyncio.create_task(test_data_task(batch))
 
-        while True:
-            await asyncio.sleep_ms(1000)
+        # Try sending data to the MQTT task in a queue of strings
+        the_queue = queue.Queue(maxsize=3)
+
+        # Create a list of tasks which asyncio will run concurrently
+        tasks = []
+        tasks.append(asyncio.create_task(mqtt_task(the_queue)))
+        tasks.append(asyncio.create_task(other_task()))
+        tasks.append(asyncio.create_task(test_data_task(the_queue)))
+
+        # Using asyncio.gather() allows us to catch and deal with exceptions in
+        # each task; otherwise one task may quit while others just keep going
+        try:
+            await asyncio.gather(*tasks)
+        except MemoryError as oops:
+            print(f"FAIL: {oops}")
+            machine.reset()
+
 
     print("Testing MQTT node for Bogan Radar")
     try:
