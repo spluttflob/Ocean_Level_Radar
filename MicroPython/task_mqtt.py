@@ -13,7 +13,7 @@ import machine
 from esp32 import NVS
 from utime import ticks_ms, ticks_diff
 import uasyncio as asyncio
-import queue
+import databatch
 from mqtt_as import MQTTClient, config
 
 
@@ -77,13 +77,14 @@ async def up(client):
 
 
 ## Task that sends MQTT messages about radar distance measurements.
-#  The messages are delivered in queue mqtt_queue; messages are kept in the
-#  queue until a specified number have arrived, at which time the messages are
-#  published to the subscribed MQTT broker.
-#  @param a_queue A queue that gives this task strings of data to be sent
+#  The messages are delivered by a DataBatch consumer; messages are kept in the
+#  batch until a specified number have arrived, at which time the batch of
+#  messages is published to the given MQTT broker.
+#  @param consumer A DataBatch consumer object from which we get bytearrays of
+#         data to be sent to the MQTT broker
 #  @param next_queue A queue that sends the data to another task, or None if
 #         the data should be deleted when it has been sent
-async def mqtt_task(a_queue, next_queue=None):
+async def mqtt_task(consumer, next_queue=None):
 
     global ip_node          # Last number in IP address, global for other tasks
 
@@ -134,64 +135,46 @@ async def mqtt_task(a_queue, next_queue=None):
     print(f"Publishing to MQTT topic {full_mqtt_topic}")
 
     while True:
-        message = await a_queue.get()
+        message = await consumer.get()
         start_time = ticks_ms()
-        await mqtt_client.publish(full_mqtt_topic, message.encode(), qos=1)
+        await mqtt_client.publish(full_mqtt_topic, message, qos=1)
         print(f"MQTT pub in {ticks_diff(ticks_ms(), start_time)} ms")
-        if next_queue is not None:
-            try:
-                next_queue.put_nowait(message)
-            except queue.QueueFull:
-                print("Next queue full")
-        else:
-            del message
+        del message
 
 
 if __name__ == "__main__":
 
     ## Create some data (just counting numbers and text) and put it in the queue
-    async def test_data_task(a_queue):
+    async def test_data_task(a_batch):
         count = 0
-        send_str = ""
         while True:
-            try:
-                send_str += f"#{count} {gc.mem_free()} bytes free random access memory. "
-            except MemoryError as i_forgot:
-                print(f"Problem: {i_forgot}")
+            send_str = f"#{count}: {gc.mem_free()} bytes. "
             count += 1
-            if count % 10 == 0:
-                try:
-                    a_queue.put_nowait(send_str)
-                except queue.QueueFull:
-                    print(f"Queue full: {len(send_str)} bytes")
-                print("--> ", end='')
-                send_str = ""
+            await a_batch.put(send_str.encode())
             await asyncio.sleep_ms(1000)
 
 
     ## Another task which prints periodically to verify that the MQTT task
     #  hasn't blocked all tasks from running.  Hopefully.
-    async def other_task():
-        count = 0
-        blatt = ""
+    async def other_task(a_consumer):
         while True:
-            blatt += "blatterfs " * 200
-            print(f"Other task: {count} RAM: {gc.mem_free()}.  ")
-            count += 1
-            await asyncio.sleep_ms(2_000)
+            text = await a_consumer.get()
+            print(f"{text} RAM: {gc.mem_free()}.  ")
 
 
     ## Get the task functions running, then twiddle thumbs until Control-C'ed.
     async def main():
 
-        # Try sending data to the MQTT task in a queue of strings
-        the_queue = queue.Queue(maxsize=3)
+        # Create a DataBatch object and two consumers that get the data
+        batch = databatch.DataBatch(5, maxsize=10)
+        consumer_A = batch.register()
+        consumer_B = batch.register()
 
         # Create a list of tasks which asyncio will run concurrently
         tasks = []
-        tasks.append(asyncio.create_task(mqtt_task(the_queue)))
-        tasks.append(asyncio.create_task(other_task()))
-        tasks.append(asyncio.create_task(test_data_task(the_queue)))
+        tasks.append(asyncio.create_task(test_data_task(batch)))
+        tasks.append(asyncio.create_task(mqtt_task(consumer_A)))
+        tasks.append(asyncio.create_task(other_task(consumer_B)))
 
         # Using asyncio.gather() allows us to catch and deal with exceptions in
         # each task; otherwise one task may quit while others just keep going

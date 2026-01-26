@@ -4,142 +4,105 @@
 #  The batch is really just a string made of smaller strings, but it uses
 #  asyncio events to synchronize production of data in one task with sending
 #  and/or storage of data in multiple other tasks. Saving data in one task and
-#  using it in multiple tasks is what distinguishes this class from a queue.
+#  using it in multiple tasks, as well as accumulating long strings efficiently,
+#  are what distinguish this class from a regular queue.
+#
+#  @author Spluttflob with help from ChatGPT 5.2
+#  @date   2026-Jan-25
+#  @copyright (c) 2026 by Spluttflob, released under the GPL V3
 
 import gc
-from io import StringIO
+from io import BytesIO
 import uasyncio as asyncio
+from broadqueue import BroadcastQueue, _BQConsumer
 
 
 ## This class holds a batch of data which will be saved gradually as data is
 #  measured, then saved in a file or sent at once through a network connection.
 #  It uses asyncio to cause data consuming tasks to wait for a batch to be
 #  ready.
-class DataBatch:
+class DataBatch(BroadcastQueue):
 
-    ## Initialize a batch, creating two string IO objects to store the data.
+    ## Initialize a batch, creating a BytesIO object to store the data.
     #  @param batch_size The number of entries saved before printing or sending
-    #  @param n_consumers The number of tasks using the data
-    def __init__(self, batch_size, n_consumers):
+    #  @param maxsize The maximum number of items allowed in the queue
+    #  @param drop_old True if recently joined consumer ignores oldest items
+    def __init__(self, batch_size, maxsize=10, drop_old=False):
+        super().__init__(maxlen=maxsize, drop_oldest=drop_old)
 
-        self._data = [StringIO(), StringIO()]
+        self._data = bytearray()       # The bytestring currently being written
         self._n_saved = 0              # The number of entries saved so far
         self._size = batch_size        # Number of entries before data is sent
-        self._consumers = n_consumers  # How many consumer tasks use the data
-
-        self._writing = 0            # Which StringIO is being written, 0 or 1
-
-        # This event tells consuming tasks that data is ready to be used
-        self._data_ready = asyncio.Event()
-        self._data_ready.clear()
-
-        # Number of consumers for which we're still waiting
-        self._waiting_for = 0
 
 
-    ## Add a new bit of data (as a string) to this batch of data, then delete
+    ## Add a new bit of data (as bytes) to this batch of data, then delete
     #  the data after a copy was tacked onto the batch of data. This method
     #  waits for data to be saved if necessary.
     #  TODO: Add double buffering so data may be taken as it's being saved
-    #  @param new_data A string containing more data to be added to the batch
-    def put(self, new_data):
-        self._data[self._writing].write(new_data)
+    #  @param new_data A bytearray containing more data to be added to the batch
+    async def put(self, new_data):
         self._n_saved += 1
+        self._data.extend(new_data)
+        del new_data
 
-        # If the batch is ready to be read, switch the reading and writing 
-        # StreamIO objects and unblock the consuming task(s)
+        # If the batch is ready to be read, put the StreamIO object in the queue
         if self._n_saved >= self._size:
-            self._waiting_for = self._consumers
-            self._writing ^= 1                        # Switch 1 to 0 or 0 to 1
             self._n_saved = 0
-            self._data_ready.set()
+            await super().put(self._data)
+            self._data = bytearray()       # Make a new byte array for new data
 
         return self
-
-
-    ## Check if a batch of data is ready. This allows get() to be used in a
-    #  non-blocking manner by only calling get() when data is ready.
-    #  @returns True if the batch of data is ready to be read, False if not
-    def ready(self):
-        return self._data_ready.is_set()
-
-
-    ## Return a batch of data when it is ready, blocking the calling task until
-    #  the batch has been filled with data.
-    #  Usage: batch_o_data = await the_batch.get()
-    #  @returns One whole batch of saved data as a string
-    async def get(self):
-        # Batch is not yet ready; suspend task until data batch is full
-        await self._data_ready.wait()
-        self._data_ready.clear()
-        return self._data[self._writing ^ 1].getvalue()
-
-
-    ## Each consumer task calls this when finished consuming. When all the
-    #  consumers are done with the data, we can begin making a new batch.
-    def done(self):
-        self._waiting_for -= 1
-        if self._waiting_for <= 0:
-            self._data[self._writing ^ 1].close()
-            self._data[self._writing ^ 1] = StringIO()
-            gc.collect()
-
-
-    ## Return the data batch as a string to be stored, printed, sent over the
-    #  web, or otherwise used. This method is only for debugging and is not to
-    #  be used in a task.
-    def __str__(self):
-        return self._data[self._writing ^ 1].getvalue()
 
 
 #-------------------------------------------------------------------------------
 
 if __name__ == "__main__":
 
+    import utime
+
     begin_ram = None
 
     # Function that creates some fake data
     async def task_data(a_batch):
         count = 0
-        
         while True:
-            data = f"Data {count}, "
+            data = f"Data {count}, ".encode()
             count += 1
-            a_batch.put(data)
+            await a_batch.put(data)
             del data
             await asyncio.sleep_ms(1_000)
 
 
     # One function that displays the data
-    async def task_show_A(a_batch):
+    async def task_show_A(a_cons):
         while True:
-            to_show = await a_batch.get()
+            to_show = await a_cons.get()
             print(f"A: {to_show} ")
-            a_batch.done()
 
 
     # Another function that displays the same data
-    async def task_show_B(b_batch):
+    async def task_show_B(b_cons):
         global begin_ram
         while True:
-            to_show = await b_batch.get()
-            print(f"B: {to_show} ")
+            to_show = await b_cons.get()
+            print(f"B: {to_show}   ", end='')
             print(f"RAM: {begin_ram - gc.mem_free()}")
-            b_batch.done()
 
 
     # The function which creates and runs each of the task functions
     async def main():
         global begin_ram
+        gc.collect()
         begin_ram = gc.mem_free()
         print(f"Begin: {begin_ram}")
 
-        # Params: Number of data before sending batch, number of consumer tasks
-        batch = DataBatch(5, 2)
+        batch = DataBatch(5, maxsize=10)
+        consumer_A = batch.register()
+        consumer_B = batch.register()
 
         asyncio.create_task(task_data(batch))
-        asyncio.create_task(task_show_A(batch))
-        asyncio.create_task(task_show_B(batch))
+        asyncio.create_task(task_show_A(consumer_A))
+        asyncio.create_task(task_show_B(consumer_B))
 
         while True:
             await asyncio.sleep_ms(1_000)

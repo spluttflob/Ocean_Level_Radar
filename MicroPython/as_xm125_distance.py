@@ -308,16 +308,16 @@ class XM125Distance:
     #           (yes, I just made that up). Distance and strength measurements
     #           are separated by commas, and distance,strength pairs are
     #           separated by semicolons.
-    async def measure_to_sacsv(self) -> str:
+    async def measure_to_sacsv(self) -> bytes:
         n_dist, nearer, calib, error = await self.measure_distance()
         if n_dist == 0:
-            return "NR"
+            return b"NR"
         else:
             ret_str = ";".join([f"{dist / 1000.0},{self.from_u32(sgth) / 1000.0:.1f}"
                                 for dist, sgth
                                 in zip(self.get_distances(n_dist),
                                        self.get_strengths(n_dist))])
-        return ret_str
+        return ret_str.encode()
 
 
 if __name__ == "__main__":
@@ -325,7 +325,7 @@ if __name__ == "__main__":
     import machine
     import utime
 
-    print("Testing the XM125 radar module again")
+    print("Testing the XM125 radar module")
 
     # Create an I2C bus object to talk to the sensor
     i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
