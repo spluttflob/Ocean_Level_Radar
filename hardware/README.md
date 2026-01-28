@@ -2,6 +2,10 @@
 
 Version 1.3 (Still in alpha)
 
+**NOTE: The 1.3 board version has not performed well enough in testing and is
+considered obsolete. Newer boards are being prepared. The process of installing
+the newer boards will be the same as that of installing older boards.**
+
 The current design uses the following bits:
 
 * An Acconeer&trade; XM125 radar mounted to the bottom of a circuit board, with
