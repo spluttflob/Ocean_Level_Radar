@@ -88,9 +88,11 @@ def gps_off():
 #  strings from it to make information available to other tasks. The task
 #  code doesn't do much because the action happens in callbacks in AS_GPS
 #  @param i2c The I2C bus which is used to talk to the PCF8523 real-time clock
+#  @param data_batch A data batch collector to which GPS data is put for saving
+#         to the SD card and sending through MQTT if available
 #  @param period_ms How often the GPS is turned on to find time and place
 #  @param test_print Whether to print diagnostic data to the serial port
-async def gps_task(i2c, period_ms=600_000, test_print=False):
+async def gps_task(i2c, data_batch, period_ms=600_000, test_print=False):
 
     global gps_fix_ready, valid_datetime
 
@@ -139,6 +141,15 @@ async def gps_task(i2c, period_ms=600_000, test_print=False):
         if pcf_rtc is not None:
             pcf_rtc.datetime = [year, mon, day, hrs, mns, scs]
         valid_datetime = True
+
+        # Put the GPS position into the data batch for sending and/or saving
+        lat = the_gps.latitude()
+        lon = the_gps.longitude()
+        alt = the_gps.altitude
+#         node = task_mqtt.ip_node
+        fix_it = f"G{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt}\r\n"
+        data_batch.put(fix_it.encode())
+        del fix_it
 
         # Turn off the GPS; we'll turn it on to get the next fix
         gps_fix_ready.clear()

@@ -30,10 +30,9 @@ import pcf8523                # Real-time clock on the Adalogger
 import task_sd_card           # For storing data on the Adalogger
 import task_gps               # Reads NMEA strings from a generic GPS module
 import as_xm125_distance      # The radar module
-# import task_network           # Keeps a network connection up if needed
 import task_mqtt              # If messages are sent through Web in real time
 import task_watchdog          # Monitors system and reboots if malfunctioning
-import task_web               # Makes data files available on web pages
+# import task_web               # Makes data files available on web pages
 
 
 ## How many milliseconds (approximately) between data points.
@@ -44,13 +43,18 @@ import task_web               # Makes data files available on web pages
 #  the system unnecessarily.
 MS_PER_DATA_POINT = 5000
 
-## Save location, date, and time directly from GPS once per this many data lines
-GPS_FIX_PER_SAVE = const(60)
+## Save location from GPS once per this many data lines
+GPS_LINE_PERIOD = const(60)
 
 ## @brief   The number of data points per MQTT messsage.
 #  @details This is used so we're not continuously spamming the MQTT broker,
 #  instead giving it a larger message less frequently.
 POINTS_PER_DATA_BATCH = const(60)
+
+## @brief   The maximum number of items in the DataBatch queue.
+#  @details The queue will keep readings in case the SD card or MQTT system are
+#  slowed for some reason, but too large a queue may run out of memory.
+MAX_DATA_QUEUE_SIZE = 10
 
 ## How many data batches between MQTT "hello" messages that say what this data
 #  is about. We may use public MQTT brokers, so anyone might read the data
@@ -58,7 +62,7 @@ BATCHES_PER_HELLO = 12
 
 ## A message sent infrequently to the MQTT broker explaining to the public what
 #  this data is
-HELLO_MESSAGE = "# Public tide data (c) Spluttflob, CC-BY-NC-SA 3.0"
+HELLO_MESSAGE = b"# Public tide data (c) Spluttflob, CC-BY-NC-SA 3.0"
 
 ## The number of the pin used to wake up the radar and put it to sleep
 RADAR_WAKE_PIN_NUM = const(27)
@@ -115,55 +119,36 @@ async def task_radar(data_batch):
     print(f"Protocol status {radar.protocol_status():08x}", end='  ')
     print(f"Detector status {radar.detector_status():08x}")
 
-    last_fix_count = GPS_FIX_PER_SAVE // 4
+    gps_count = GPS_LINE_PERIOD * 4 // 5
     hello_count = BATCHES_PER_HELLO
-    test_count = 0                                       #############################
 
     while True:
         # Take measurement first; it might take some time
         prt_str = await radar.measure_to_sacsv()
-#         prt_str = ", ".join([f"test {x + test_count}" for x in range(8)])
-        test_count += 8
 
         # Immediately after measurement, record time from real-time clock
         now = utime.localtime()
         now_str = f"D{now[0]:04d}-{now[1]:02d}-{now[2]:02d}T{now[3]:02d}:{now[4]:02d}:{now[5]:02d}"
 
-        a_line = ";".join((now_str, prt_str))
+        a_line = b";".join((now_str.encode(), prt_str))
         del now_str, prt_str
-        print(a_line, gc.mem_free(), sep=';')
-        a_line += "\r\n"
+        print(a_line, "|", gc.mem_free())
+        a_line += b"\r\n"
 
         # Send the line of data to the data batch, which will pass batches of
         # data to the tasks that store and/or send the data
-        data_batch.put(a_line)
+        await data_batch.put(a_line)
         del a_line
         if hello_count > BATCHES_PER_HELLO:
             hello_count = 0
-            data_batch.put(HELLO_MESSAGE)
-
-#         # If it's time to save a line of GPS data, do so and reset counter
-#         if task_gps.valid_datetime:
-#             last_fix_count += 1
-#             if last_fix_count > GPS_FIX_PER_SAVE:
-#                 last_fix_count = 0
-#                 day, mon, year = task_gps.the_gps.date
-#                 year += 2000
-#                 hrs, mns, scs = task_gps.the_gps.local_time
-#                 lat = task_gps.the_gps.latitude()
-#                 lon = task_gps.the_gps.longitude()
-#                 alt = task_gps.the_gps.altitude
-#                 node = task_mqtt.ip_node
-#                 fix_it = f"G{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt},{node}"
-#                 data_batch.put(fix_it + "\r\n")
-#                 del fix_it
+            await data_batch.put(HELLO_MESSAGE)
 
         # We're having memory allocation errors on classic ESP32 sometimes. Try
         # to keep memory well managed to prevent such errors
         gc.collect()
 
         # Keep the watchdog task happy so it doesn't reboot the processor
-        task_watchdog.radar_task_flag = True
+        task_watchdog.radar_event.set()
 
         # Wait the correct duration so this task runs at the next sampling time
         await perd.wait_next()
@@ -176,31 +161,18 @@ async def task_radar(data_batch):
 async def main():
     global i2c
 
-#     # Create an object to store data in batches, then send batches to SD card,
-#     # MQTT, and other task(s) that save or send data. Parameters are number of
-#     # data per batch and number of tasks that use the data
-#     batch = databatch.DataBatch(batch_size=POINTS_PER_DATA_BATCH,
-#                                 n_consumers=2)
-# 
-#     gc.collect()
-#     print(f"After batch RAM free: {gc.mem_free()}")
-
-    the_queue = queue.Queue(maxsize=10)
-
-    # This task is only used if the device will be on a LAN reporting data in
-    # real time; if on solar at a remote site, comment out this task and set the
-    # second parameter of DataBatch constructor above to 1 (SD card task only)
-    asyncio.create_task(task_mqtt.mqtt_task(batch))
-
-    # Wait for the previous tasks to get stable before running other tasks. 
-    await asyncio.sleep_ms(5_000)
-
-    gc.collect()
-    print(f"After MQTT RAM free: {gc.mem_free()}")
+    # Create a DataBatch object and two consumers that get the data. The
+    # DataBatch should discard data if the queue becomes full because of
+    # one stuck consumer; the other consumer will still get all the data
+    batch = databatch.DataBatch(POINTS_PER_DATA_BATCH,
+                                maxsize=MAX_DATA_QUEUE_SIZE, drop_old=True)
+    consumer_A = batch.register()
+    consumer_B = batch.register()
 
     tasks = []
-    tasks.append(asyncio.create_task(task_sd_card.task_SD_Card(batch)))
-    tasks.append(asyncio.create_task(task_gps.gps_task(i2c)))
+    tasks.append(asyncio.create_task(task_sd_card.task_SD_Card(consumer_A)))
+    tasks.append(asyncio.create_task(task_mqtt.mqtt_task(consumer_B)))
+    tasks.append(asyncio.create_task(task_gps.gps_task(i2c, batch)))
     tasks.append(asyncio.create_task(task_radar(batch)))
     tasks.append(asyncio.create_task(task_watchdog.task_watchdog()))
 
@@ -208,8 +180,14 @@ async def main():
 #     asyncio.create_task(task_network.check_WiFi_task()) # Not used if MQTT is
 #     asyncio.create_task(task_web.file_server_task())    # Won't work with MQTT
 
+    gc.collect()
+    print(f"After tasks RAM free: {gc.mem_free()}")
+
     # Using asyncio.gather() allows us to catch and deal with exceptions in
     # each task; otherwise one task may quit while others just keep going
+    while True:
+        await asyncio.sleep_ms(1000)
+
     try:
         await asyncio.gather(*tasks)
     except MemoryError as oops:

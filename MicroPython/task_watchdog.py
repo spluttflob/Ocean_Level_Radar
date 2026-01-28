@@ -15,6 +15,21 @@ import uasyncio as asyncio
 from utime import sleep_ms, ticks_ms, ticks_diff
 
 
+## The timeout of the hardware watchdog timer in milliseconds
+WDT_TIMEOUT_MS = 600_000
+
+## An event to be set by the MQTT task when data is received from its queue
+mqtt_event = asyncio.Event()
+mqtt_event.set()
+
+## An event set by the SD card task when data is received from the queue
+sd_card_event = asyncio.Event()
+sd_card_event.set()
+
+## An event set by the radar task when data is read from the XM125 sensor
+radar_event = asyncio.Event()
+radar_event.set()
+
 ## An indicator LED used by the watchdog task to show things are OK (or not)
 #  On the EZSBC board, the LED turns on when the pin is set low.
 status_LED = Pin(13, Pin.OUT, value=1)
@@ -25,20 +40,17 @@ LED_ON = 0
 ## The pin value that extinguishes the LED
 LED_OFF = 1
 
-## How often in milliseconds to check that other tasks are still running
-TASK_CHECK_MS = 60_000
-
-## Flag that indicates the radar task is still running. Every minute, this task
-#  sets the flag to False; another task must set it True or system reboots.
-radar_task_flag = True
-
-# ## Flag that indicates the SD card task is running. Every minute, this task
+# ## Flag that indicates the radar task is still running. Every minute, this task
 # #  sets the flag to False; another task must set it True or system reboots.
-# sd_card_task_flag = True
-
-## Flag that indicates the MQTT task is running.  Every minute, this task
-#  sets the flag to False; another task must set it True or system reboots.
-mqtt_task_flag = True
+# radar_task_flag = True
+# 
+# # ## Flag that indicates the SD card task is running. Every minute, this task
+# # #  sets the flag to False; another task must set it True or system reboots.
+# # sd_card_task_flag = True
+# 
+# ## Flag that indicates the MQTT task is running.  Every minute, this task
+# #  sets the flag to False; another task must set it True or system reboots.
+# mqtt_task_flag = True
 
 
 ## @brief   Task function which monitors how the rest of the system is doing.
@@ -50,37 +62,28 @@ mqtt_task_flag = True
 #           system will be restarted by software in this task.
 async def task_watchdog():
 
-    global radar_task_flag, sd_card_task_flag, mqtt_task_flag
-
     # Wait a minute before activating the watchdog timer; this allows someone
     # to Ctrl-C the system after reboot and halt main.py if there is a bug that
     # would otherwise cause infinitely repeating watchdog timer reboots.
     await asyncio.sleep_ms(60_000)
 
-    doggo = WDT(timeout=10_000)            # Timeout in 10 seconds if not fed
-    last_check_time = ticks_ms()           # Last time we checked task flags
+    doggo = WDT(timeout=WDT_TIMEOUT_MS)
+    print(f"Watchdog activated, period {WDT_TIMEOUT_MS//1000} sec.")
 
     while True:
 
+        # Wait for all of the watched task's events to be set
+        # await asyncio.gather(ev1.wait(), ev2.wait(), ev3.wait())
+        await asyncio.gather(mqtt_event.wait(),
+                             sd_card_event.wait(),
+                             radar_event.wait())
+
+        print("Feeding watchdog")
         doggo.feed()                       # Ensure the watchdog (timer) is fed
-
-        # Once every TASK_CHECK_MS, check for a message from each task which is
-        # being watched by a software watchdog. If any of these tasks has
-        # stopped, complain woefully and reboot the system
-        if ticks_diff(ticks_ms(), last_check_time) >= TASK_CHECK_MS:
-            last_check_time = ticks_ms()
-
-            if not radar_task_flag:
-                print("Oh noes! Radar task stopped; we'll reboot.")
-                await asyncio.sleep_ms(1_000)
-                reset()
-            else:
-                print(f"Watchdog check passed, {gc.mem_free()}B free.")
-
-            radar_task_flag = False
-
-        # Run often enough to definitely keep the doggo fed if there's no crash
-        await asyncio.sleep_ms(1_000)
+        
+        mqtt_event.clear()
+        sd_card_event.clear()
+        radar_event.clear()
 
 #         # Battery voltage is being wonky on test machine; not using it for now
 #         batt_v_ctl_pin.value(1)            # Turn on voltage divider, wait for

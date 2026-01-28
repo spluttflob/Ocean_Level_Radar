@@ -15,6 +15,7 @@ from utime import ticks_ms, ticks_diff
 import uasyncio as asyncio
 import databatch
 from mqtt_as import MQTTClient, config
+import task_watchdog
 
 
 ## The namespace in the ESP32's NVS where network SSID and password are stored
@@ -136,6 +137,7 @@ async def mqtt_task(consumer, next_queue=None):
 
     while True:
         message = await consumer.get()
+        task_watchdog.mqtt_event.set()   # So watchdog timer doesn't reset ESP32
         start_time = ticks_ms()
         await mqtt_client.publish(full_mqtt_topic, message, qos=1)
         print(f"MQTT pub in {ticks_diff(ticks_ms(), start_time)} ms")
@@ -165,8 +167,10 @@ if __name__ == "__main__":
     ## Get the task functions running, then twiddle thumbs until Control-C'ed.
     async def main():
 
-        # Create a DataBatch object and two consumers that get the data
-        batch = databatch.DataBatch(5, maxsize=10)
+        # Create a DataBatch object and two consumers that get the data. The
+        # DataBatch should discard data if the queue becomes full because of
+        # one stuck consumer; the other consumer will still get all the data
+        batch = databatch.DataBatch(5, maxsize=10, drop_old=True)
         consumer_A = batch.register()
         consumer_B = batch.register()
 

@@ -13,7 +13,6 @@
 import asyncio
 import struct
 from micropython import const
-from queue import Queue                   # The uasyncio V3 version
 from machine import Pin
 from utime import sleep_ms
 
@@ -313,8 +312,8 @@ class XM125Distance:
         if n_dist == 0:
             return b"NR"
         else:
-            ret_str = ";".join([f"{dist / 1000.0},{self.from_u32(sgth) / 1000.0:.1f}"
-                                for dist, sgth
+            ret_str = ";".join([f"{dist/1000.0},{self.from_u32(sth)/1000.0:.1f}"
+                                for dist, sth
                                 in zip(self.get_distances(n_dist),
                                        self.get_strengths(n_dist))])
         return ret_str.encode()

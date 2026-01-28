@@ -16,9 +16,8 @@ import uasyncio as asyncio
 from machine import SDCard, Pin
 from os import mount, umount, listdir, stat, sync
 from gc import mem_free
-import queue
-# import databatch
-# import task_gps                        # So we can ask it for date and time
+import databatch
+import task_watchdog
 
 
 ## The name of the file that holds the radar device configuration.
@@ -147,9 +146,9 @@ async def file_name_from_date():
 #    * 1 - SD card detected; open it and read configuration file
 #    * 2 - SD card present and open; save data when available
 #
-#  @param in_queue A queue that keeps sets of data (strings) to be saved
-#  @param out_queue A queue for sending the data to another task, if any
-async def task_SD_Card(in_queue, out_queue=None):
+#  @param consumer A DataBatch connection that supplies batches of strings of
+#         data to be written to this SD card
+async def task_SD_Card(consumer):
 
     state = 0
 
@@ -168,6 +167,8 @@ async def task_SD_Card(in_queue, out_queue=None):
                 print(f"Files in {SD_DIR}: {listdir(SD_DIR)}")
                 state = 1                 # We've found a card
                 await asyncio.sleep_ms(10)
+            finally:
+                task_watchdog.sd_card_event.set()
 
         # Now that a card has been mounted, read the configuration file and
         # write configuration information to the data file
@@ -191,71 +192,124 @@ async def task_SD_Card(in_queue, out_queue=None):
         # (to prevent getting stuck) and go to state 0 to try to remount the
         # SD card so the next data batch can be saved. 
         elif state == 2:
+            to_write = await consumer.get()
+
+            task_watchdog.sd_card_event.set()    # So watchdog won't reset ESP32
+
             try:
-                to_write = await in_queue.get()
                 with open(data_file_name, 'a') as da_file:
                     da_file.write(to_write)
             except OSError as foops:
                 print(f"Problem saving to data file: {foops}")
                 try:
                     umount(SD_DIR)
-                except OSError:
+                except OSError:             # SD card not present or working
                     pass
                 finally:
                     state = 0               # Where we try to re-mount
             finally:
-                if out_queue is not None:
-                    try:
-                        out_queue.put_nowait(to_write)
-                    except queue.QueueFull:
-                        print("Next queue full")
-                else:
-                    del to_write
+                del to_write    # So memory can be reused while we wait for data
 
             await asyncio.sleep_ms(50)
 
 
 # --------------------------------- Test Code ----------------------------------
 #
-# NOT WORKING RIGHT NOW: Needs to be updated to use the most recent queue stuff
+# NOT WORKING RIGHT NOW: Needs to be updated to use the most recent databatch
 
 if __name__ == "__main__":
 
-    import utime
-
-    the_queue = queue.Queue(maxsize=3)
-
-    print(f"Task SD Card Test, asyncio {'.'.join(map(str, asyncio.__version__))}")
-
-    # Simulate a task sending data to be recorded; just use time from the RTC.
-    # We're going to beat the heck out of the SD card to see if we can reproduce
-    # errors that have been causing the wave radar to stop working
-    async def sim_data_task(a_queue):
+    ## Create some data (just counting numbers and text) and put it in the queue
+    async def test_data_task(a_batch):
         count = 0
         while True:
-            now = utime.localtime()
-            now_str = f"{now[3]:02d}:{now[4]:02d}:{now[5]:02d},{mem_free()}\r\n"
+            send_str = f"#{count}: {gc.mem_free()} bytes. "
             count += 1
-            if count % 25 == 0:
-                print(now_str, end='')
-            a_queue.put(now_str)
-            await asyncio.sleep_ms(200)
+            await a_batch.put(send_str.encode())      # Save bytes, not Unicode
+            await asyncio.sleep_ms(1000)
 
 
-    # Run the task function as a test.
-    async def main():
-        asyncio.create_task(task_SD_Card(the_queue))
-        asyncio.create_task(sim_data_task(the_queue))
-
+    ## Another task which prints periodically to verify that the SD card task
+    #  hasn't blocked all tasks from running.  Hopefully.
+    async def other_task(a_consumer):
         while True:
-            await asyncio.sleep_ms(1_000)
+            text = await a_consumer.get()
+            print(f"{text} RAM: {gc.mem_free()}.  ")
 
+
+    ## Get the task functions running, then twiddle thumbs until Control-C'ed.
+    async def main():
+
+        # Create a DataBatch object and two consumers that get the data. The
+        # DataBatch should discard data if the queue becomes full because of
+        # one stuck consumer; the other consumer will still get all the data
+        batch = databatch.DataBatch(5, maxsize=10, drop_old=True)
+        consumer_A = batch.register()
+        consumer_B = batch.register()
+
+        # Create a list of tasks which asyncio will run concurrently
+        tasks = []
+        tasks.append(asyncio.create_task(test_data_task(batch)))
+        tasks.append(asyncio.create_task(task_SD_Card(consumer_A)))
+        tasks.append(asyncio.create_task(other_task(consumer_B)))
+
+        # Using asyncio.gather() allows us to catch and deal with exceptions in
+        # each task; otherwise one task may quit while others just keep going
+        try:
+            await asyncio.gather(*tasks)
+        except MemoryError as oops:
+            print(f"FAIL: {oops}")
+            machine.reset()
+
+
+    print("Testing SD card for Bogan Radar")
     try:
         asyncio.run(main())
 
     except KeyboardInterrupt:
-        print("Ctrl-C. ", end='')
+        print("Control-C ", end='')
 
-    asyncio.new_event_loop()
-    print("\r\nTest finished.")
+    finally:
+        asyncio.new_event_loop()             # Clear retained state
+        print("Exiting")
+
+
+
+#     import utime
+# 
+#     the_queue = queue.Queue(maxsize=3)
+# 
+#     print(f"Task SD Card Test, asyncio {'.'.join(map(str, asyncio.__version__))}")
+# 
+#     # Simulate a task sending data to be recorded; just use time from the RTC.
+#     # We're going to beat the heck out of the SD card to see if we can reproduce
+#     # errors that have been causing the wave radar to stop working
+#     async def sim_data_task(a_queue):
+#         count = 0
+#         while True:
+#             now = utime.localtime()
+#             now_str = f"{now[3]:02d}:{now[4]:02d}:{now[5]:02d},{mem_free()}\r\n"
+#             count += 1
+#             if count % 25 == 0:
+#                 print(now_str, end='')
+#             a_queue.put(now_str)
+#             await asyncio.sleep_ms(200)
+# 
+# 
+#     # Run the task function as a test.
+#     async def main():
+#         asyncio.create_task(task_SD_Card(the_queue))
+#         asyncio.create_task(sim_data_task(the_queue))
+# 
+#         while True:
+#             await asyncio.sleep_ms(1_000)
+# 
+#     try:
+#         asyncio.run(main())
+# 
+#     except KeyboardInterrupt:
+#         print("Ctrl-C. ", end='')
+# 
+#     asyncio.new_event_loop()
+#     print("\r\nTest finished.")
 

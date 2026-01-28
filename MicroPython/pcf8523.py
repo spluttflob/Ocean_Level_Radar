@@ -1,6 +1,6 @@
 ## PCF8523 Real Time Clock (RTC) module for MicroPython
 #
-#  Nov. 2025 Spluttflob made minor changes to MicroPython version
+#  Nov. 2025 Spluttflob made minor changes to MicroPython version, added tests
 #  Jun. 2020 Meurisse D. for MCHobby (shop.mchobby.be) ported to MicroPython
 #  Nov. 2016 Philip R. Moyer and Radomir Dopieralski for Adafruit Industries
 #            - original version for CircuitPython
@@ -15,6 +15,8 @@
 # Dopieralski for Adafruit Industries.
 #
 # Code from https://github.com/mchobby/esp8266-upy/tree/master/pcf8523
+#
+# BUG: Something in here thinks January 2026 is the 13th month of 2025...!
 #
 # __version__ = "0.0.1"
 
@@ -342,27 +344,34 @@ class PCF8523:
             self.i2c.writeto_mem(self.address, ALARM_REG + 0x03, self.buf1)
 
 
-# Test code
+# -------------------------- Test code -------------------------
 if __name__ == "__main__":
+
     import machine
+
     i2c = machine.I2C(0, scl=machine.Pin(22), sda=machine.Pin(23))
     print(f"I2C devices: {i2c.scan()}")
 
-    rtc = PCF8523(i2c)
+    # This is the PCF8523 that we're testing
+    pcf_rtc = PCF8523(i2c)
 
-    # (year, month, mday, hour, minute, second, weekday, yearday)
-#     now = [2023, 10, 31, 10, 10, 10]
-#     rtc.datetime = now
+    # The ESP32 has an RTC also
+    esp_rtc = machine.RTC()
+    print(f"Begin with ESP32 RTC at {esp_rtc.datetime()}")
+
+    year, mon, day, hrs, mns, scs = pcf_rtc.datetime
+    esp_rtc.datetime([year, mon, day, 0, hrs, mns, scs, 0])
+    print(f"Set ESP32 RTC to {esp_rtc.datetime()} from PCF8523")
 
     while True:
         try:
-            _time = rtc.datetime
-            print(f"Time: {_time}")
-            print(rtc.get_datetime_str(RTC_REG, True, True))
+            _time = pcf_rtc.datetime
+            print(f"Time: {_time}", end="   ")
+            print(pcf_rtc.get_datetime_str(RTC_REG, True, True))
         #     print(time.localtime(_time))
         except KeyboardInterrupt:
             break
-        time.sleep_ms(1000)
+        time.sleep_ms(10_000)
 
     print("Test done.")
 
