@@ -79,16 +79,6 @@ async def handle_directory_listing(writer, dir_path, url_path):
     writer.write("<html><body>\n")
     writer.write("<h1>Bogan Radar SD Card</h1>\n<ul>\n")
 
-    # Parent directory link, if not at "/"
-    if url_path not in ("", "/"):
-        parent = url_path.rstrip("/")
-        i = parent.rfind("/")
-        if i <= 0:
-            parent = "/"
-        else:
-            parent = parent[:i]
-        writer.write(f'<li><a href="{parent}">[..]</a></li>\n')
-
     for name in entries:
         if url_path in ("", "/"):
             href = "/" + name
@@ -97,7 +87,7 @@ async def handle_directory_listing(writer, dir_path, url_path):
         else:
             href = url_path + "/" + name
 
-        writer.write('<li><a href="{href}">{name}</a></li>\n')
+        writer.write(f'<li><a href="{href}">{name}</a></li>\n')
 
     writer.write("</ul>\n</body></html>\n")
     await writer.drain()

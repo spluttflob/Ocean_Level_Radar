@@ -32,7 +32,7 @@ import task_gps               # Reads NMEA strings from a generic GPS module
 import as_xm125_distance      # The radar module
 import task_mqtt              # If messages are sent through Web in real time
 import task_watchdog          # Monitors system and reboots if malfunctioning
-# import task_web               # Makes data files available on web pages
+import task_web               # Makes data files available on web pages
 
 
 ## How many milliseconds (approximately) between data points.
@@ -175,10 +175,7 @@ async def main():
     tasks.append(asyncio.create_task(task_gps.gps_task(i2c, batch)))
     tasks.append(asyncio.create_task(task_radar(batch)))
     tasks.append(asyncio.create_task(task_watchdog.task_watchdog()))
-
-#     await asyncio.sleep_ms(2_000)
-#     asyncio.create_task(task_network.check_WiFi_task()) # Not used if MQTT is
-#     asyncio.create_task(task_web.file_server_task())    # Won't work with MQTT
+    asyncio.create_task(task_web.file_server_task())
 
     gc.collect()
     print(f"After tasks RAM free: {gc.mem_free()}")

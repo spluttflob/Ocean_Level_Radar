@@ -17,6 +17,21 @@ Mechanical part designs, including radar antennas and lenses, are currently
 being developed and will be added to this repository if and when we figure out
 what on Earth we're doing. 
 
+### Power
+
+The current (2026 January) hardware versions may be powered by connecting the
+ESP32 to a laptop through a USB cable, **or** by supplying the system with 
+5 volts DC through the water resistant connector on the box. 
+
+If a laptop cannot supply enough current through its USB port, the ESP32 may
+reboot due to low supply voltage (it says `brownout detected`.)  Usually, 
+rebooting a couple of times causes it to come to life; if that doesn't work, 
+try another laptop and/or a powered USB hub. 
+
+<span color="red">Only one source of power should be used at a time; **do not** 
+connect the ESP32 Feather to a PC while DC power is being supplied through the 
+waterproof connector.</span>
+
 
 ## Firmware
 
@@ -49,14 +64,13 @@ Feather circuit boards.
 
 With MicroPython installed on the ESP32, all the Python source files should 
 be copied to the root directory of the ESP32's MicroPython filesystem, and 
-`radar.cfg` should be copied to the root directory of the SD card which will 
-be used for data logging. Configuration of the system for use at specific 
-sites should require editing of `main.py` and `radar.cfg` only. The 
-main Python file is edited to disable unneeded tasks; for example, the MQTT 
-task should be turned off (just comment out the `asyncio.create_task()` line)
-at sites where WiFi access and AC power are not available. The radar's range, 
-frequency of data collection, and similar configurations are set in `radar.cfg`
-which can be edited on the SD card. 
+`radar.cfg` should be copied to the root directory of the ESP32 file
+system. Configuration of the system for use at specific sites may require 
+editing of `main.py` and `task_mqtt.py`. The main Python file is edited to 
+disable unneeded tasks; for example, the MQTT task should be turned off 
+(just comment out the `asyncio.create_task()` line) at sites where WiFi 
+access and AC power are not available. The radar's range, frequency of data 
+collection, and similar configurations are set in `radar.cfg`. 
 
 ##### MicroPython File List
 
@@ -184,6 +198,12 @@ instructions **with the following exceptions:**
 If MicroPython is used, data will be saved in a Semicolon And Comma Separated
 Variable (`.sacsv`) format. Some simple programs to plot data in this form are
 being developed and can be found in the `CPython` directory. 
+
+An older plotting program (look for lower numbers) uses data in a format 
+without the date on each reading; this has caused some inconvenience, so newer
+data is saved will a full datetime on every reading, and newer CPython scripts
+with higher numbers in the file names use the newer format. 
+
 
 ### Plotting C++ Firmware Data
 

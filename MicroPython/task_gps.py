@@ -148,7 +148,7 @@ async def gps_task(i2c, data_batch, period_ms=600_000, test_print=False):
         alt = the_gps.altitude
 #         node = task_mqtt.ip_node
         fix_it = f"G{lat[1]},{lat[0]},{lon[1]},{lon[0]},{alt}\r\n"
-        data_batch.put(fix_it.encode())
+        await data_batch.put(fix_it.encode())
         del fix_it
 
         # Turn off the GPS; we'll turn it on to get the next fix
