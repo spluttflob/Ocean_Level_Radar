@@ -1,28 +1,21 @@
-# Workflow designed by ChatGPT 5.2 and slightly tweaked by Spluttflob.
-# 2025-Jan-29
-
 name: Build MicroPython .mpy
 
 on:
   push:
     branches: ["main"]
     paths:
-      # Run only when MicroPython .py sources change...
       - "MicroPython/**/*.py"
-      # ...but do NOT trigger when changes are only in the generated output tree
       - "!MicroPython/mpy/**"
 
 permissions:
   contents: write
 
 concurrency:
-  # One build per branch ref; cancel older runs if a new push arrives
   group: mpy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-mpy:
-    # Don't run if this push was made by the Actions bot (i.e., our auto-commit)
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
@@ -30,7 +23,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Needed so we can push back to the repo
           fetch-depth: 0
 
       - name: Set up Python
@@ -53,17 +45,12 @@ jobs:
 
           SRC_DIR="MicroPython"
           OUT_DIR="MicroPython/mpy"
-
           mkdir -p "${OUT_DIR}"
 
-          # Find all .py under MicroPython, but exclude the output dir itself
-          # and compile them into MicroPython/mpy, preserving subdirectories.
           while IFS= read -r -d '' f; do
-            rel="${f#${SRC_DIR}/}"            # e.g. pkg/foo.py
-            out="${OUT_DIR}/${rel%.py}.mpy"   # e.g. MicroPython/mpy/pkg/foo.mpy
+            rel="${f#${SRC_DIR}/}"
+            out="${OUT_DIR}/${rel%.py}.mpy"
             mkdir -p "$(dirname "$out")"
-
-            # Adjust optimization level as desired: -O0/-O1/-O2/-O3
             mpy-cross -O2 -o "$out" "$f"
           done < <(find "${SRC_DIR}" \
                     -type f -name '*.py' \
@@ -77,13 +64,11 @@ jobs:
 
           git add MicroPython/mpy
 
-          # Exit cleanly if nothing changed
           if git diff --cached --quiet; then
             echo "No .mpy changes to commit."
             exit 0
           fi
 
-          # Commit as the standard GitHub Actions bot identity
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
