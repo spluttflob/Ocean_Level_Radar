@@ -23,7 +23,7 @@ class BroadcastQueue:
     def __init__(self, maxlen=10, drop_oldest=False):
         self._lock = asyncio.Lock()
         self._buf = []
-        self._base = 0              # absolute index of _buf[0]
+        self._base = 0
         self._maxlen = maxlen
         self._drop_oldest = drop_oldest
         self._consumers = []
