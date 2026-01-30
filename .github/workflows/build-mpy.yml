@@ -36,17 +36,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "4.12"
-          # NOTE: no pip caching because this repo doesn't have requirements.txt/pyproject.toml
-          # cache: "pip"
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: ".github/requirements-ci.txt"
 
-      - name: Install mpy-cross (recent)
+      - name: Install mpy-cross
         run: |
           python -m pip install --upgrade pip
-          # Option A: track latest published wheel on PyPI
-          pip install mpy-cross
-          # Option B (recommended for reproducibility): pin
-          # pip install "mpy-cross==1.23.0"
+          pip install -r .github/requirements-ci.txt
           mpy-cross --version
 
       - name: Compile .py -> .mpy into MicroPython/mpy
