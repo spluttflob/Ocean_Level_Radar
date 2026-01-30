@@ -7,6 +7,9 @@ on:
       - "MicroPython/**/*.py"
       - "!MicroPython/mpy/**"
 
+# Manual trigger for testing
+workflow_dispatch:
+
 permissions:
   contents: write
 
