@@ -36,8 +36,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: "pip"
+          python-version: "4.12"
+          # NOTE: no pip caching because this repo doesn't have requirements.txt/pyproject.toml
+          # cache: "pip"
 
       - name: Install mpy-cross (recent)
         run: |
