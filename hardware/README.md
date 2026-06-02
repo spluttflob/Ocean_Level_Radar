@@ -1,10 +1,18 @@
 # Bogan Radar Hardware Notes
 
-Version 1.3 (Still in alpha)
+**Version 1.4 (Still in alpha)**
 
-**NOTE: The 1.3 board version has not performed well enough in testing and is
+This newer board is simpler and easier to assemble than V1.3.  All the SMD parts
+are on one side of the board, so the SMDs can be soldered on first; a hot plate
+works pretty well for this.  After the SMDs are in place, the through-hole parts 
+can be attached to the other side.  The assembly of the board to the radar
+antenna and installation in an enclosure are the same for both boards. 
+
+**Version 1.3 (Obsolete; do not use)**
+
+_**NOTE:** The 1.3 board version has not performed well enough in testing and is
 considered obsolete. Newer boards are being prepared. The process of installing
-the newer boards will be the same as that of installing older boards.**
+the newer boards will be the same as that of installing older boards._
 
 The current design uses the following bits:
 
@@ -19,14 +27,22 @@ The current design uses the following bits:
   
 * A generic GPS receiver atop the circuit board
 
-* A LiPo battery charging circuit built onto the board
+* A LiPo battery charging circuit built into the Feather board
 
 The radar system is enclosed in a generic waterproof junction box. 
 The board is mounted atop a horn-type millimeter-wave antenna that is attached
 to the box with a waterproof seal.  The system is watertight so that it has a
 chance to survive when deployed just above the ocean. 
 
-## Board V1.3 Hacks
+_Note from testing: The enclosure shown has been tested in and survived 
+several rainstorms, though a small amount of water was found in the bottom of
+the box after about 6 weeks and several storms._
+
+![Rendering of Board V1.4 Top Side](wave_radar_1.4_front.jpg)
+
+![Rendering of Board V1.4 Bottom Side](wave_radar_1.4_back.jpg)
+
+## Board V1.3 Hacks (legacy; use newer boards)
 
 The design of the system has changed since a batch of the Version 1.3 boards
 was manufactured, so there have been some hacks made involving jumper wires.
